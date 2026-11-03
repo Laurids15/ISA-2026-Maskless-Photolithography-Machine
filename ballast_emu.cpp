@@ -101,12 +101,12 @@ static const float   FAN_FULL_HZ[] = { 150, 150, 150 }; /* fast Hz / tach ved 10
 #define FAN_LOG_MS      2000  /* skriv blæserstatus i loggen (0 = fra) */
 
 /* Farvehjul: falsk index-signal (fast frekvens, hardware-PWM = ingen jitter)
- * PIN_CW_INDEX -> 1k -> index-benet på projektorens farvehjulsstik
+ * PIN_CW_INDEX -> 1k -> index-benet på projektorens farvehjulsstik (GPIO18)
  * (index-sensoren tages ud). Med CW_VIA_TRANSISTOR 1 går det via en BD139
  * som open-collector, ligesom blæserne.                                  */
 #define CW_EMU            1
 #define PIN_CW_INDEX      18
-#define CW_HZ             120   /* målt: 120 Hz */
+#define CW_HZ             130   /* 130 Hz: projektoren tror hjulet kører for hurtigt og slukker motoren (motor kan fjernes). Normal: 120 Hz ved 60 Hz kilde */
 #define CW_PULSE_US       600   /* målt: 600 us */
 #define CW_PULSE_LEVEL    1     /* niveau på index-benet under pulsen: 1 = kort høj puls (målt) */
 #define CW_VIA_TRANSISTOR 0     /* 1 = BD139 imellem (inverterer) */
