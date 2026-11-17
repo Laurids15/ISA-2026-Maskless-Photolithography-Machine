@@ -1,6 +1,44 @@
 # ISA-2026-Maskless-Photolithography-Machine
 
-This repository includes the files needed to build, calibrate, and use the maskless photolithography machine constructed by a group of students from SDU during an ISA project in 2026.
+This repository contains the software, calibration data, documentation, masks, and test patterns for a student-built maskless photolithography machine developed at SDU during an ISA project in 2026.
+
+The machine uses an InFocus IN124 DMD, a Stemi 2000-C microscope, an M405L3 405 nm UV LED, and SU-8 TF 6000.5 photoresist. The DMD projects binary or greyscale patterns directly onto the wafer, removing the need for a physical photolithography mask.
+
+## What this repository provides
+
+- Browser-based mask design, mask viewing, camera control, and exposure tools.
+- Calibration patterns for resolution, focus, dose, illumination uniformity, and alignment.
+- A calibration guide covering the optical setup and measurement procedure.
+- MATLAB/Octave scripts for grey-response analysis, power-meter probe analysis, flat-field correction, and correction-map refinement.
+- Example masks, measurement logs, processed results, and the final correction data used by the exposure tools.
+
+## Quick start
+
+1. Open [`ISA2026/test_patterns/viewer.html`](ISA2026/test_patterns/viewer.html) in Chrome or Edge on the projector computer. Use the calibration grid, black field, dose ladder, and resolution patterns to verify the setup.
+2. Open [`ISA2026/maskwriter/designer.html`](ISA2026/maskwriter/designer.html) to draw a mask on the 1024 x 768 DMD grid. Export a PNG or send the design directly to the exposure page.
+3. Open [`ISA2026/maskwriter/expose.html`](ISA2026/maskwriter/expose.html), load the mask, select the exposure time, and expose it using the armed-screen workflow.
+4. For new calibration data, place the power-meter CSV logs in [`ISA2026/matlab_greyscale`](ISA2026/matlab_greyscale), update the settings at the top of the relevant MATLAB scripts, and run `run_all.m`.
+
+The detailed operating instructions are in the [maskwriter documentation](ISA2026/maskwriter/README.txt), [test-pattern documentation](ISA2026/test_patterns/README.txt), [MATLAB analysis documentation](ISA2026/matlab_greyscale/README.txt), and [calibration guide](ISA2026/calibration_guide/calibration_guide.pdf).
+
+## Important operating requirements
+
+- The projector output must be exactly 1024 x 768 pixels at device pixel ratio 1. Use 100% display scaling, 100% browser zoom, and fullscreen mode. Any resampling changes the projected feature sizes.
+- White pixels represent lit DMD mirrors. With the negative SU-8 process, lit areas are the areas that remain after development.
+- At 5x magnification, the nominal scale is 2.2 um per DMD pixel. At 2.5x, it is 4.4 um per pixel. Confirm the actual scale with the calibration grid.
+- The default usable area is x = 0-896 and y = 0-768. The exposure page can black out the unused part of the DMD and calculate dose from the usable area.
+- Keep the UV LED off, or use the green filter, while previewing patterns and focusing. Use the low-intensity focus procedure in the test-pattern documentation before exposing a fresh area of the wafer.
+
+## Recommended calibration workflow
+
+1. Verify pixel scale and distortion with the calibration grid.
+2. Check for stray light with the black-field pattern at an increased dose.
+3. Find a suitable working dose with the dose ladder.
+4. Measure line gaps, resolution, field uniformity, and focus with the test patterns.
+5. Run the grey ramp and uniformity probe when the optics, projector settings, or alignment change.
+6. Use the MATLAB scripts to generate a correction map and grey curve, then paste the results into the exposure/viewer settings.
+
+The repository includes a final 32 x 24 power-meter correction map and measured grey curve in the web tools. The recorded 10 November 2026 measurements reduced usable-area variation from about 4.4% standard deviation without correction to about 1.6% with correction. These values are reference results, not a substitute for recalibration after changing the optical setup.
 
 ## Repository contents
 
