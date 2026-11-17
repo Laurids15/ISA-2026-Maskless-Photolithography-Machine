@@ -40,6 +40,20 @@ The detailed operating instructions are in the [maskwriter documentation](ISA202
 
 The repository includes a final 32 x 24 power-meter correction map and measured grey curve in the web tools. The recorded 10 November 2026 measurements reduced usable-area variation from about 4.4% standard deviation without correction to about 1.6% with correction. These values are reference results, not a substitute for recalibration after changing the optical setup.
 
+## Use of AI
+
+Parts of this repository were developed with the help of generative AI (Claude, Anthropic):
+
+- **Web tools** (`maskwriter/designer.html`, `maskwriter/expose.html`, `test_patterns/viewer.html`,
+  `test_patterns/camera.html`) and the test patterns
+- **MATLAB scripts** for the power-meter analysis, grey curve and greyscale correction (`matlab_greyscale/`)
+- **Documentation**: drafts of the user guides (quick guide, calibration guide, assembly guide) in LaTeX
+
+The setup, the measurements and the experiments were done by the authors. All AI-assisted code and text was
+reviewed, tested on the setup and edited by the authors, who take full responsibility for the content.
+Calibration values and results in the guides come from our own measurements.
+
+
 ## Repository contents
 
 ### Root files
