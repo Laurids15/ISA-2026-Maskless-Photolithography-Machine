@@ -1,61 +1,71 @@
 /*
- * ballast_emu_esp32.ino
- * Emulator for OSRAM P-VIP lampeballast (standardiseret 5-pin interface)
- * til LED-ombygning af projektor (InFocus IN124 m.fl.).
+ * ballast_emu.cpp
+ * Emulator for an OSRAM P-VIP lamp ballast (standardized 5-pin interface)
+ * for converting a DLP projector to an LED/UV-LED light source
+ * (InFocus IN124 and similar). Also emulates removed fans and the
+ * colour-wheel index sensor.
  *
  * Board     : ESP32 DevKit (ESP32-WROOM-32), Arduino-ESP32 core 3.x
- * Projektor : 3,3 V logik. Direkte forbindelse - ingen optokoblere.
+ * Projector : 3.3 V logic. Direct connection - no optocouplers.
+ * Power     : projector 3.3 V rail -> ESP32 3V3 pin (or 5 V -> 5V/VIN).
  *
- * Emulatoren opfører sig som ballasten set fra projektoren:
- *  - "Flag"-mode (efter opstart): Flag-udgangen melder "lampe tændt", når
- *    projektoren har aktiveret SCI og den emulerede tænding er overstået.
- *  - UART-mode (når projektoren sender 0x70): svarer på kommandoer og
- *    queries efter "Standardized UART Protocol" v3.3, 9600 8E1.
- *    Hardware-UART1 bruges; Flag-benet skiftes mellem GPIO og UART-TX.
+ * Seen from the projector, the emulator behaves like the ballast:
+ *  - "Flag" mode (after power-up): the Flag output reports "lamp on" once
+ *    the projector has activated SCI and the emulated ignition is done.
+ *  - UART mode (when the projector sends 0x70): answers commands and
+ *    queries per the "Standardized UART Protocol" v3.3, 9600 8E1.
+ *    Hardware UART1 is used; the Flag pin is switched between GPIO and
+ *    UART TX through the GPIO matrix.
  *
  * ------------------------------------------------------------------
- * TILSLUTNING (se diagrammet)
+ * WIRING (see the build guide)
  *
- * Projektorens 5-pin stik (Gen4/5 standard - TJEK pinout på din ballast!):
+ * Projector 5-pin connector (Gen4/5 standard - CHECK the pinout of your ballast!):
  *   Pin 1  Flag/TxD+   Pin 2  Flag/TxD-   Pin 3  Common LED+
  *   Pin 4  SCI/Sync    Pin 5  DIM/RxD
- * Ældre Gen3 "front"-ballast (stik CN1) er spejlvendt:
+ * Older Gen3 "front" ballasts (connector CN1) are mirrored:
  *   Pin 5  Flag/TxD+   Pin 4  Flag/TxD-   Pin 3  Common LED+
  *   Pin 2  SCI/Sync    Pin 1  DIM/RxD
  *
- * Stikket har intet GND-ben. ESP32-GND forbindes til projektorens
- * lavvolts-GND (hovedprint, blæser- eller farvehjulsstik) - ALDRIG til
- * ballastens strømstik (380-400 V DC).
+ * The connector has no GND pin. Connect ESP32 GND to the projector's
+ * low-voltage GND (main board, fan or colour-wheel connector) - NEVER to
+ * the ballast power connector (380-400 V DC).
  *
- *   J1.3 LED+        : ikke forbundet (mål: skal være <= 3,3 V)
- *   J1.5 DIM/RxD     -> 330R -> GPIO25,  10k pull-up til 3V3
- *   J1.4 SCI/Sync    -> 330R -> GPIO27,  10k pull-up til 3V3
- *   Flag/TxD         : GPIO26 -> 330R -> J1.2 (TX_INVERT 0) eller J1.1 (TX_INVERT 1)
+ *   J1.3 LED+        : not connected (measure: must be <= 3.3 V)
+ *   J1.5 DIM/RxD     -> 330R -> GPIO25,  10k pull-up to 3V3
+ *   J1.4 SCI/Sync    -> 330R -> GPIO27,  10k pull-up to 3V3
+ *   Flag/TxD         : GPIO26 -> 330R -> J1.2 (TX_INVERT 0) or J1.1 (TX_INVERT 1)
  *
- *   Mål med ballasten frakoblet og projektoren tændt (pin 1 og 2 mod GND):
- *     A) pin 1 = 3,3 V, pin 2 = 0 V via pull-down -> brug pin 2, TX_INVERT 0
- *     B) pin 1 = 3,3 V via pull-up, pin 2 = 0 V   -> brug pin 1, TX_INVERT 1
+ *   Measure with the ballast disconnected and the projector on (pins 1, 2 to GND):
+ *     A) pin 1 = 3.3 V, pin 2 = 0 V via pull-down -> use pin 2, TX_INVERT 0
+ *     B) pin 1 = 3.3 V via pull-up, pin 2 = 0 V   -> use pin 1, TX_INVERT 1
  *
- * Blæser-emulator (én kanal pr. fjernet blæser, op til 3).
- * Hver kanal er FAN_FIXED (fast 150 Hz, kun tach-delen bygges) eller
- * FAN_PWM (følger projektorens PWM, hele kanalen bygges) - se FAN_MODE.
- * Standard: kanal 1 fast, kanal 2 og 3 PWM.
- *   Ben på projektorens blæserstik: rød (+12V), sort (PWM, lav = tændt), hvid (tach)
- *   Dummy      : 1k 0,5 W mellem rød og sort (trækker sort op i PWM-pausen,
- *                som blæserens spole gjorde)
- *   PWM ind    : sort -> 10k -> FAN_IN,  3k3 fra FAN_IN til GND
- *   Tach ud    : FAN_OUT -> 4k7 -> basis på BD139 (ben 3), 10k basis -> GND,
- *                emitter (ben 1) -> GND, kollektor (ben 2) -> hvid
- *   Kanal 1: FAN_IN GPIO34, FAN_OUT GPIO32
- *   Kanal 2: FAN_IN GPIO35, FAN_OUT GPIO33
- *   Kanal 3: FAN_IN GPIO4,  FAN_OUT GPIO14
+ * Fan emulator (one channel per removed fan, up to 3).
+ * Each channel is FAN_FIXED, FAN_PWM or FAN_LOW - see FAN_MODE.
+ * Current setup: channel 1 FAN_FIXED (fan 1, real tach at 150 Hz).
+ * Fans 2 and 3 have a lock/alarm signal on the white wire (0 V = running);
+ * it is held low with a 1k resistor to GND, so channels 2 and 3 are unused.
+ *   Fan connector pins: red (+12V), black (PWM, low = on), white (tach/alarm)
+ *   Tach out   : FAN_OUT -> 4k7 -> BD139 base (pin 3), 10k base -> GND,
+ *                emitter (pin 1) -> GND, collector (pin 2) -> white
+ *   FAN_PWM only:
+ *     Dummy    : 1k 0.5 W between red and black (pulls black up during the
+ *                PWM off-time, as the fan coil did)
+ *     PWM in   : black -> 10k -> FAN_IN,  3k3 from FAN_IN to GND
+ *   Channel 1: FAN_IN GPIO34, FAN_OUT GPIO32
+ *   Channel 2: FAN_IN GPIO35, FAN_OUT GPIO33
+ *   Channel 3: FAN_IN GPIO4,  FAN_OUT GPIO14
  *
- *   ESP32 måler PWM-dutycyclen, lader en virtuel blæser speede op/ned
- *   og trækker kun tach lav, mens PWM er tændt - præcis som en rigtig
- *   blæser, hvis elektronik mister strøm i PWM-pausen.
+ *   In FAN_PWM mode the ESP32 measures the PWM duty cycle, lets a virtual
+ *   fan spin up/down, and pulls tach low only while PWM is on - exactly
+ *   like a real fan whose electronics lose power during the PWM off-time.
  *
- * Status : indbygget LED på GPIO2 - se led_update() for mønstrene.
- * Log    : USB-serial 115200 baud.
+ * Colour wheel: fake index signal on GPIO18 -> 1k -> index signal pin
+ * (sensor removed). At 130 Hz the DLP controller thinks the wheel is
+ * overspeeding and cuts motor power, so the motor can be removed.
+ *
+ * Status : on-board LED on GPIO2 - see led_update() for the patterns.
+ * Log    : USB serial 115200 baud.
  * ------------------------------------------------------------------
  */
 
@@ -65,58 +75,58 @@
 #include "soc/gpio_sig_map.h"
 #include "soc/gpio_struct.h"
 
-/* ======================= INDSTILLINGER ======================= */
+/* ========================== SETTINGS ========================== */
 
 #define PIN_RXD         25    /* J1.5 DIM/RxD  (input)          */
 #define PIN_SCI         27    /* J1.4 SCI/Sync (input)          */
 #define PIN_FLAG        26    /* Flag / TxD    (output)         */
-#define PIN_LED         2     /* indbygget LED på de fleste DevKits */
+#define PIN_LED         2     /* on-board LED on most DevKits    */
 
-#define TX_INVERT       0     /* 0 = tilfælde A (pin 2), 1 = tilfælde B (pin 1) */
+#define TX_INVERT       0     /* 0 = case A (pin 2), 1 = case B (pin 1) */
 #define LED_ACTIVE_HIGH 1
 
-#define SCI_MODE        1     /* 1 = følg SCI fra projektoren, 0 = lampe altid "tændt" */
-#define SCI_TIMEOUT_MS  50    /* SCI aktiv hvis lav eller skiftet inden for så mange ms */
-#define BOOT_DELAY_MS   500   /* bruges kun ved SCI_MODE 0 */
+#define SCI_MODE        1     /* 1 = follow SCI from the projector, 0 = lamp always "on" */
+#define SCI_TIMEOUT_MS  50    /* SCI active if low or toggled within this many ms */
+#define BOOT_DELAY_MS   500   /* only used with SCI_MODE 0 */
 
 #define IGNITION_MS     800
 #define RUNUP_MS        1500
 #define COOLDOWN_MS     2000
 
-#define FAN_EMU         1     /* 1 = emulér fjernede blæsere */
+#define FAN_EMU         1     /* 1 = emulate removed fans */
 #define FAN_COUNT       3
 enum : uint8_t { FAN_FIXED, FAN_PWM, FAN_LOW };
 static const uint8_t FAN_MODE[]    = { FAN_FIXED, FAN_LOW, FAN_LOW };
-                                   /* FAN_FIXED: fast frekvens, FAN_IN bruges ikke
-                                      FAN_PWM  : følger projektorens PWM på sort
-                                      FAN_LOW  : hvid holdes fast lav ("kører"-
-                                                 alarmsignal), FAN_IN bruges ikke */
-static const uint8_t FAN_IN[]      = { 34, 35, 4 };     /* sort ledning via 10k/3k3 */
-static const uint8_t FAN_OUT[]     = { 32, 33, 14 };    /* BD139-basis via 4k7      */
-static const float   FAN_FULL_HZ[] = { 150, 150, 150 }; /* fast Hz / tach ved 100 % PWM */
-#define FAN_PWM_ON_LEVEL 0    /* sort ledning lav = blæser tændt (low-side PWM) */
-#define FAN_MIN_DUTY_PM 150   /* under 15 % PWM står den virtuelle blæser stille */
-#define FAN_TAU_S       0.8f  /* hvor hurtigt den virtuelle blæser speeder op/ned */
-#define FAN_TIMEOUT_US  20000 /* ingen PWM-flanker så længe = fast tændt/slukket */
-#define FAN_LOG_MS      2000  /* skriv blæserstatus i loggen (0 = fra) */
+                                   /* FAN_FIXED: fixed frequency, FAN_IN unused
+                                      FAN_PWM  : follows the projector PWM on black
+                                      FAN_LOW  : white held low ("running"
+                                                 alarm signal), FAN_IN unused */
+static const uint8_t FAN_IN[]      = { 34, 35, 4 };     /* black wire via 10k/3k3 */
+static const uint8_t FAN_OUT[]     = { 32, 33, 14 };    /* BD139 base via 4k7     */
+static const float   FAN_FULL_HZ[] = { 150, 150, 150 }; /* fixed Hz / tach at 100 % PWM */
+#define FAN_PWM_ON_LEVEL 0    /* black wire low = fan on (low-side PWM) */
+#define FAN_MIN_DUTY_PM 150   /* below 15 % PWM the virtual fan stands still */
+#define FAN_TAU_S       0.8f  /* how fast the virtual fan spins up/down */
+#define FAN_TIMEOUT_US  20000 /* no PWM edges for this long = steady on/off */
+#define FAN_LOG_MS      2000  /* print fan status to the log (0 = off) */
 
-/* Farvehjul: falsk index-signal (fast frekvens, hardware-PWM = ingen jitter)
- * PIN_CW_INDEX -> 1k -> index-benet på projektorens farvehjulsstik (GPIO18)
- * (index-sensoren tages ud). Med CW_VIA_TRANSISTOR 1 går det via en BD139
- * som open-collector, ligesom blæserne.                                  */
+/* Colour wheel: fake index signal (fixed frequency, hardware PWM = no jitter)
+ * PIN_CW_INDEX -> 1k -> index pin on the projector's colour-wheel connector
+ * (index sensor removed). With CW_VIA_TRANSISTOR 1 it goes through a BD139
+ * as open collector, like the fans.                                       */
 #define CW_EMU            1
 #define PIN_CW_INDEX      18
-#define CW_HZ             130   /* 130 Hz: projektoren tror hjulet kører for hurtigt og slukker motoren (motor kan fjernes). Normal: 120 Hz ved 60 Hz kilde */
-#define CW_PULSE_US       600   /* målt: 600 us */
-#define CW_PULSE_LEVEL    1     /* niveau på index-benet under pulsen: 1 = kort høj puls (målt) */
-#define CW_VIA_TRANSISTOR 0     /* 1 = BD139 imellem (inverterer) */
+#define CW_HZ             130   /* 130 Hz: projector thinks the wheel is too fast and cuts the motor (motor can be removed). Normal: 120 Hz with a 60 Hz source */
+#define CW_PULSE_US       600   /* measured: 600 us */
+#define CW_PULSE_LEVEL    1     /* level on the index pin during the pulse: 1 = short high pulse (measured) */
+#define CW_VIA_TRANSISTOR 0     /* 1 = BD139 in between (inverts) */
 
-/* Måletilstand: mål på de RIGTIGE, kørende blæsere (slår FAN_EMU fra).
- * Indgang pr. probe: ledning -> 10k -> ben, BAT85 fra ben til 3V3
- * (katode mod 3V3), 100k fra ben til GND.
+/* Sniff mode: measure the REAL, running fans (disables FAN_EMU).
+ * Input per probe: wire -> 10k -> pin, BAT85 from pin to 3V3
+ * (cathode to 3V3), 100k from pin to GND.
  * Probe 1 = GPIO34, probe 2 = GPIO35, probe 3 = GPIO4.               */
-#define FAN_SNIFF       0     /* 1 = måletilstand */
-#define SNIFF_GAP_US    500   /* pause der adskiller tach-pulser fra PWM-hak */
+#define FAN_SNIFF       0     /* 1 = sniff mode */
+#define SNIFF_GAP_US    500   /* gap that separates tach pulses from PWM chopping */
 #if FAN_SNIFF
 #undef  FAN_EMU
 #define FAN_EMU         0
@@ -137,12 +147,12 @@ static const float   FAN_FULL_HZ[] = { 150, 150, 150 }; /* fast Hz / tach ved 10
 
 #define LOG_BAUD        115200
 
-/* ========================= AFLEDTE ============================ */
+/* ========================== DERIVED =========================== */
 
 #define U_RAW  ((uint16_t)((uint32_t)LAMP_VOLT_V * 65535UL / UMAX_V))
 #define I_RAW  ((uint16_t)(((uint32_t)LAMP_POWER_W * 1000UL / LAMP_VOLT_V) * 1023UL / IMAX_MA))
 
-static_assert(sizeof(LABEL) <= 16, "LABEL max 15 tegn");
+static_assert(sizeof(LABEL) <= 16, "LABEL max 15 characters");
 
 enum : uint8_t {
     ST_STANDBY  = 0x00,
@@ -170,7 +180,7 @@ enum : uint8_t {
     VMEM_SIZE   = 0x2C
 };
 
-/* ========================= TILSTAND =========================== */
+/* =========================== STATE ============================ */
 
 static HardwareSerial &Ballast = Serial1;
 
@@ -199,13 +209,13 @@ static void log_bytes(char dir, const uint8_t *p, uint8_t n)
 
 /* ======================== FLAG / TX =========================== */
 
-/* lit = "transistor leder" (lampe tændt i flag-mode) */
+/* lit = "transistor conducting" (lamp on in flag mode) */
 static void flag_level(bool lit)
 {
     gpio_set_level((gpio_num_t)PIN_FLAG, (lit ^ TX_INVERT) ? 1 : 0);
 }
 
-/* Skift Flag-benet mellem GPIO (flag-mode) og UART1-TX (UART-mode) */
+/* Switch the Flag pin between GPIO (flag mode) and UART1 TX (UART mode) */
 static void tx_attach_uart(bool on)
 {
     if (on) {
@@ -213,7 +223,7 @@ static void tx_attach_uart(bool on)
         delay(1);
         esp_rom_gpio_connect_out_signal(PIN_FLAG, U1TXD_OUT_IDX, TX_INVERT, false);
     } else {
-        Ballast.flush();                                   /* vent til sidste byte er sendt */
+        Ballast.flush();                                   /* wait until the last byte is sent */
         esp_rom_gpio_connect_out_signal(PIN_FLAG, SIG_GPIO_OUT_IDX, false, false);
     }
 }
@@ -235,7 +245,7 @@ static void send_err_echo(const uint8_t *c, uint8_t n)
     err_flash_until = now_ms + 500;
 }
 
-/* ===================== VIRTUEL HUKOMMELSE ===================== */
+/* ====================== VIRTUAL MEMORY ======================== */
 
 static void vm_put16(uint8_t ofs, uint16_t v)
 {
@@ -304,7 +314,7 @@ static bool mem_write(uint16_t a, uint8_t v)
     return true;
 }
 
-/* ===================== LAMPE-TILSTANDSMASKINE ================= */
+/* ===================== LAMP STATE MACHINE ===================== */
 
 static void set_state(uint8_t s)
 {
@@ -342,14 +352,14 @@ static void lamp_tick(void)
     }
 }
 
-/* ========================= STATUS-LED ========================= */
+/* ========================= STATUS LED ========================= */
 /*
- *  Kort blink hvert sekund       : venter, intet SCI fra projektoren
- *  Kort blink 2x i sekundet      : SCI ok, venter på Lamp On (UART-mode)
- *  Hurtigt blink (4 Hz)          : tænding / run-up
- *  Tændt med kort sluk hvert sek.: normal drift (to sluk = UART-mode)
- *  Langsomt blink (1 Hz, 50 %)   : afkøling
- *  Flimmer                       : modtagefejl / afvist kommando
+ *  Short blink every second      : waiting, no SCI from the projector
+ *  Short blink twice a second    : SCI ok, waiting for Lamp On (UART mode)
+ *  Fast blink (4 Hz)             : ignition / run-up
+ *  On, short off every second    : normal operation (two offs = UART mode)
+ *  Slow blink (1 Hz, 50 %)       : cool-down
+ *  Flicker                       : receive error / rejected command
  */
 static void led_update(void)
 {
@@ -387,7 +397,7 @@ static void sci_update(void)
 #if SCI_MODE
     static uint32_t last_active = 0;
     static bool ever = false;
-    if (digitalRead(PIN_SCI) == LOW || sci_edge) {   /* projektoren trækker SCI lav = aktiv */
+    if (digitalRead(PIN_SCI) == LOW || sci_edge) {   /* projector pulls SCI low = active */
         sci_edge = false;
         last_active = now_ms;
         ever = true;
@@ -402,7 +412,7 @@ static void sci_update(void)
     }
 }
 
-/* ========================= KOMMANDOER ========================= */
+/* ========================= COMMANDS =========================== */
 
 static uint8_t cmd_len(uint8_t k)
 {
@@ -464,9 +474,9 @@ static void execute(const uint8_t *c, uint8_t n)
     switch (c[0]) {
     case 0x25: lamp_cmd = true; break;
     case 0x26: lamp_cmd = false; error_status = 0; break;
-    case 0x3A: do_reset(); return;                 /* intet ekko */
+    case 0x3A: do_reset(); return;                 /* no echo */
     case 0x70: gain = 0x80; break;
-    case 0x75: leave_uart_mode(); return;          /* intet ekko */
+    case 0x75: leave_uart_mode(); return;          /* no echo */
     case 0x71:
         if (c[1] >= WAVEFORM_COUNT) goto err;
         waveform = c[1];
@@ -525,7 +535,7 @@ err:
     send_err_echo(c, n);
 }
 
-/* ======================= BLÆSER-EMULATOR ====================== */
+/* ======================== FAN EMULATOR ======================== */
 
 static inline void IRAM_ATTR pin_write(uint8_t pin, bool v)
 {
@@ -548,20 +558,20 @@ static inline bool IRAM_ATTR pin_read(uint8_t pin)
 static_assert(sizeof(FAN_IN) == FAN_COUNT && sizeof(FAN_OUT) == FAN_COUNT &&
               sizeof(FAN_MODE) == FAN_COUNT &&
               sizeof(FAN_FULL_HZ) / sizeof(FAN_FULL_HZ[0]) == FAN_COUNT,
-              "FAN_IN/FAN_OUT/FAN_FULL_HZ skal have FAN_COUNT elementer");
+              "FAN_IN/FAN_OUT/FAN_FULL_HZ must have FAN_COUNT elements");
 
 struct FanState {
     volatile uint32_t t_on, t_off, last_edge_us;
-    volatile uint16_t duty_pm;      /* promille af tiden PWM er tændt */
+    volatile uint16_t duty_pm;      /* per mille of the time PWM is on */
     volatile bool     pwm_on;
     volatile bool     tach_low;
-    float             hz;           /* den virtuelle blæsers tach-frekvens */
+    float             hz;           /* tach frequency of the virtual fan */
     uint32_t          next_us;
 };
 static FanState fans[FAN_COUNT];
 static portMUX_TYPE fan_mux = portMUX_INITIALIZER_UNLOCKED;
 
-/* Tach trækkes kun lav, når PWM er tændt og den virtuelle rotor står i "lav" */
+/* Tach is pulled low only while PWM is on and the virtual rotor is in "low" */
 static inline void IRAM_ATTR fan_apply(uint8_t i)
 {
     pin_write(FAN_OUT[i], fans[i].pwm_on && fans[i].tach_low);
@@ -574,7 +584,7 @@ static void IRAM_ATTR fan_edge(uint8_t i)
     FanState &f = fans[i];
 
     portENTER_CRITICAL_ISR(&fan_mux);
-    if (on && !f.pwm_on) {                      /* ny periode starter */
+    if (on && !f.pwm_on) {                      /* new period starts */
         uint32_t period = now - f.t_on;
         uint32_t on_t   = f.t_off - f.t_on;
         if (f.t_on && period > 0 && on_t <= period)
@@ -593,7 +603,7 @@ static void IRAM_ATTR fan_isr0(void) { fan_edge(0); }
 static void IRAM_ATTR fan_isr1(void) { fan_edge(1); }
 static void IRAM_ATTR fan_isr2(void) { fan_edge(2); }
 static void (*const fan_isrs[3])(void) = { fan_isr0, fan_isr1, fan_isr2 };
-static_assert(FAN_COUNT <= 3, "Tilføj flere fan_isrN for mere end 3 blæsere");
+static_assert(FAN_COUNT <= 3, "Add more fan_isrN for more than 3 fans");
 
 static void fan_setup(void)
 {
@@ -602,11 +612,11 @@ static void fan_setup(void)
         digitalWrite(FAN_OUT[i], LOW);
         fans[i].next_us = micros();
         fans[i].last_edge_us = micros();
-        if (FAN_MODE[i] == FAN_LOW) {             /* BD139 altid tændt = hvid lav */
+        if (FAN_MODE[i] == FAN_LOW) {             /* BD139 always on = white low */
             digitalWrite(FAN_OUT[i], HIGH);
             continue;
         }
-        if (FAN_MODE[i] == FAN_FIXED) {           /* altid "tændt", fuld fart */
+        if (FAN_MODE[i] == FAN_FIXED) {           /* always "on", full speed */
             fans[i].pwm_on  = true;
             fans[i].duty_pm = 1000;
             fans[i].hz      = FAN_FULL_HZ[i];
@@ -617,7 +627,7 @@ static void fan_setup(void)
     }
 }
 
-/* Kaldes hvert ms: dutycycle -> virtuel blæserhastighed */
+/* Called every ms: duty cycle -> virtual fan speed */
 static void fan_tick_ms(void)
 {
     const float k = 0.001f / FAN_TAU_S;
@@ -628,11 +638,11 @@ static void fan_tick_ms(void)
         if (FAN_MODE[i] != FAN_PWM) continue;
 
         portENTER_CRITICAL(&fan_mux);
-        if (now - f.last_edge_us > FAN_TIMEOUT_US) {   /* ingen PWM: fast niveau */
+        if (now - f.last_edge_us > FAN_TIMEOUT_US) {   /* no PWM: steady level */
             bool on = pin_read(FAN_IN[i]) == FAN_PWM_ON_LEVEL;
             f.pwm_on  = on;
             f.duty_pm = on ? 1000 : 0;
-            f.last_edge_us = now - FAN_TIMEOUT_US;      /* undgå overløb */
+            f.last_edge_us = now - FAN_TIMEOUT_US;      /* avoid overflow */
             fan_apply(i);
         }
         uint16_t duty = f.duty_pm;
@@ -643,7 +653,7 @@ static void fan_tick_ms(void)
     }
 }
 
-/* Kaldes så tit som muligt: laver tach-firkanten for hver virtuel blæser */
+/* Called as often as possible: generates the tach square wave per virtual fan */
 static void fan_tach_run(void)
 {
     uint32_t now = micros();
@@ -652,7 +662,7 @@ static void fan_tach_run(void)
         FanState &f = fans[i];
         if (FAN_MODE[i] == FAN_LOW) continue;
 
-        if (f.hz < 2.0f) {                             /* rotor står stille */
+        if (f.hz < 2.0f) {                             /* rotor stopped */
             if (f.tach_low) {
                 portENTER_CRITICAL(&fan_mux);
                 f.tach_low = false;
@@ -683,7 +693,7 @@ static void fan_log(void)
     last = now_ms;
     Serial.print("FAN");
     for (uint8_t i = 0; i < FAN_COUNT; i++) {
-        if (FAN_MODE[i] == FAN_LOW) { Serial.printf("  %u: fast lav", i + 1); continue; }
+        if (FAN_MODE[i] == FAN_LOW) { Serial.printf("  %u: held low", i + 1); continue; }
         Serial.printf("  %u: PWM %3u%% tach %3u Hz", i + 1,
                       (unsigned)(fans[i].duty_pm / 10), (unsigned)(fans[i].hz + 0.5f));
     }
@@ -692,13 +702,13 @@ static void fan_log(void)
 }
 #endif
 
-/* ========================= MÅLETILSTAND ======================= */
+/* ========================= SNIFF MODE ========================= */
 
 #if FAN_SNIFF
 static const uint8_t SNIFF_IN[3]   = { 34, 35, 4 };
 static const char   *SNIFF_NAME[3] = { "probe1", "probe2", "probe3" };
 
-struct Sniff {                    /* kun tilgået inde i sniff_mux */
+struct Sniff {                    /* only accessed inside sniff_mux */
     uint32_t rises, high_us, low_us, bursts;
     uint32_t last_us;
     uint32_t min_high, max_high, min_low, max_low;
@@ -714,8 +724,8 @@ static void IRAM_ATTR sniff_edge(uint8_t i)
     Sniff &s = sn[i];
     portENTER_CRITICAL_ISR(&sniff_mux);
     uint32_t dt = now - s.last_us;
-    if (dt > SNIFF_GAP_US) s.bursts++;          /* ny klump efter en pause */
-    if (s.level) {                               /* var høj indtil nu */
+    if (dt > SNIFF_GAP_US) s.bursts++;          /* new burst after a gap */
+    if (s.level) {                               /* was high until now */
         s.high_us += dt;
         if (dt < s.min_high) s.min_high = dt;
         if (dt > s.max_high) s.max_high = dt;
@@ -751,7 +761,7 @@ static void sniff_setup(void)
         sn[i].last_us = micros();
         attachInterrupt(digitalPinToInterrupt(SNIFF_IN[i]), isr[i], CHANGE);
     }
-    Serial.println("MÅLETILSTAND: Hz = hele signalet, klumper/s = tach inde i PWM");
+    Serial.println("SNIFF MODE: Hz = whole signal, bursts/s = tach inside PWM");
 }
 
 static void sniff_log(void)
@@ -771,11 +781,11 @@ static void sniff_log(void)
         portEXIT_CRITICAL(&sniff_mux);
 
         if (c.rises == 0) {
-            Serial.printf("%s: fast %s\n", SNIFF_NAME[i], c.level ? "HØJ" : "LAV");
+            Serial.printf("%s: steady %s\n", SNIFF_NAME[i], c.level ? "HIGH" : "LOW");
             continue;
         }
         uint32_t tot = c.high_us + c.low_us;
-        Serial.printf("%s: %5lu Hz  duty %3lu%%  klumper/s %4lu  høj %lu-%lu us  lav %lu-%lu us\n",
+        Serial.printf("%s: %5lu Hz  duty %3lu%%  bursts/s %4lu  high %lu-%lu us  low %lu-%lu us\n",
                       SNIFF_NAME[i], (unsigned long)c.rises,
                       (unsigned long)(tot ? (uint64_t)c.high_us * 100 / tot : 0),
                       (unsigned long)c.bursts,
@@ -786,7 +796,7 @@ static void sniff_log(void)
 }
 #endif
 
-/* ======================== FARVEHJUL-INDEX ===================== */
+/* ===================== COLOUR-WHEEL INDEX ===================== */
 
 #if CW_EMU
 static void cw_setup(void)
@@ -799,12 +809,12 @@ static void cw_setup(void)
     uint32_t duty = high_during_pulse ? pulse : full - pulse;
 
     if (!ledcAttach(PIN_CW_INDEX, CW_HZ, res)) {
-        Serial.println("CW: kunne ikke starte LEDC");
+        Serial.println("CW: could not start LEDC");
         return;
     }
     ledcWrite(PIN_CW_INDEX, duty);
-    Serial.printf("CW index: %u Hz, puls %u us, %s puls\n",
-                  (unsigned)CW_HZ, (unsigned)CW_PULSE_US, CW_PULSE_LEVEL ? "høj" : "lav");
+    Serial.printf("CW index: %u Hz, pulse %u us, %s pulse\n",
+                  (unsigned)CW_HZ, (unsigned)CW_PULSE_US, CW_PULSE_LEVEL ? "high" : "low");
 }
 #endif
 
@@ -812,7 +822,7 @@ static void cw_setup(void)
 
 void setup()
 {
-    setCpuFrequencyMhz(80);                 /* mindre strøm og varme; rigeligt her */
+    setCpuFrequencyMhz(80);                 /* less power and heat; plenty for this */
 
     Serial.begin(LOG_BAUD);
 
@@ -828,13 +838,13 @@ void setup()
     cw_setup();
 #endif
 
-    /* UART1: RX på PIN_RXD, TX på PIN_FLAG, 9600 8E1 */
+    /* UART1: RX on PIN_RXD, TX on PIN_FLAG, 9600 8E1 */
     Ballast.begin(9600, SERIAL_8E1, PIN_RXD, PIN_FLAG);
     Ballast.onReceiveError([](hardwareSerial_error_t e) {
         if (e == UART_PARITY_ERROR || e == UART_FRAME_ERROR) rx_err = true;
     });
 
-    /* Start i flag-mode: Flag-benet som GPIO, "lampe slukket" */
+    /* Start in flag mode: Flag pin as GPIO, "lamp off" */
     gpio_set_direction((gpio_num_t)PIN_FLAG, GPIO_MODE_OUTPUT);
     flag_level(false);
     tx_attach_uart(false);
@@ -845,7 +855,7 @@ void setup()
 
     vmem_init();
 
-    /* Opstartsblink: 3 hurtige */
+    /* Start-up blink: 3 fast */
     for (int i = 0; i < 3; i++) {
         digitalWrite(PIN_LED, LED_ACTIVE_HIGH ? HIGH : LOW); delay(80);
         digitalWrite(PIN_LED, LED_ACTIVE_HIGH ? LOW : HIGH); delay(80);
@@ -853,7 +863,7 @@ void setup()
 
     now_ms = millis();
     state_t0 = now_ms;
-    Serial.println("\nP-VIP ballast-emulator (ESP32) klar");
+    Serial.println("\nP-VIP ballast emulator (ESP32) ready");
 }
 
 /* ============================ LOOP ============================ */
@@ -872,7 +882,7 @@ void loop()
     fan_tach_run();
 #endif
 
-    /* 1 ms opgaver */
+    /* 1 ms tasks */
     if (now_ms != last_tick) {
         last_tick = now_ms;
 #if FAN_EMU
@@ -889,10 +899,10 @@ void loop()
         led_update();
     }
 
-    /* Paritets-/rammefejl: svar ACh og ignorer data i 50 ms */
+    /* Parity/framing error: reply ACh and ignore data for 50 ms */
     if (rx_err) {
         rx_err = false;
-        Serial.println("RX-fejl");
+        Serial.println("RX error");
         if (uart_mode) send1(0xAC);
         ignore_until = now_ms + 50;
         err_flash_until = now_ms + 1000;
@@ -926,7 +936,7 @@ void loop()
         }
     }
 
-    /* Ufuldstændig kommando efter 15 ms: ryd og svar ABh */
+    /* Incomplete command after 15 ms: clear and reply ABh */
     if (cmd_n && (now_ms - cmd_t0) > 15) {
         Serial.println("Timeout");
         send1(0xAB);
