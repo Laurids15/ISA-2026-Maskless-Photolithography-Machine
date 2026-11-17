@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Lithography exposure</title>
+<style>
+  html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
+  body.armed{cursor:none}
+  #cv{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:1024px;height:768px;
+      image-rendering:pixelated;image-rendering:crisp-edges;display:none;background:#000}
+  #menu{position:fixed;inset:0;color:#ddd;background:#0b0b0d;overflow:auto;
+        font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;padding:24px 32px;box-sizing:border-box}
+  h1{font-size:17px;margin:0 0 4px;letter-spacing:.06em;color:#fff}
+  h2{font-size:12px;margin:22px 0 6px;letter-spacing:.12em;color:#888;font-weight:400}
+  .sub{color:#888;margin:0 0 6px;max-width:860px}
+  table{border-collapse:collapse}
+  td,th{padding:3px 18px 3px 0;text-align:left;vertical-align:top}
+  th{color:#777;font-weight:400;border-bottom:1px solid #2a2a30}
+  tr[data-k]{cursor:pointer} tr[data-k]:hover td{color:#fff}
+  .dim{color:#777}
+  kbd{background:#1d1d22;border:1px solid #33333c;border-radius:3px;padding:1px 6px;color:#fff}
+  .ok{color:#6ee7a8} .bad{color:#ff8a6b} .warn{color:#ffcf6b}
+  .box{border:1px solid #2a2a30;padding:10px 14px;margin:12px 0;max-width:860px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:6px 26px;max-width:900px}
+  label{display:flex;gap:10px;align-items:center}
+  input,select{background:#1d1d22;border:1px solid #33333c;color:#fff;padding:3px 7px;
+        font:13px ui-monospace,monospace}
+  input[type=number]{width:80px}
+  button{background:#1d1d22;border:1px solid #44444c;color:#ccc;padding:2px 8px;font:12px ui-monospace,monospace;cursor:pointer}
+  button:hover{color:#fff;border-color:#777}
+  #log{white-space:pre;color:#bbb;max-height:220px;overflow:auto;border:1px solid #2a2a30;padding:8px 12px;max-width:860px;min-height:20px}
+</style></head><body>
+
+<canvas id="cv" width="1024" height="768"></canvas>
+
+<div id="menu">
+  <h1>LITHOGRAPHY EXPOSURE — 1024 × 768</h1>
+  <p class="sub">InFocus IN124 DMD, native resolution, strictly binary patterns generated in the page.
+  Nominal 2.2 µm/px on the wafer at 5× zoom (calibrate with pattern 2).</p>
+
+  <div class="box" id="chk"></div>
+  <div class="box warn">This menu is projected onto the wafer too. Keep the UV LED off (or the green filter in)
+  while the menu is open. Select a pattern to go to the black <b>armed</b> screen; from there you can change
+  pattern, time and fill without coming back here.</div>
+
+  <h2>SETTINGS</h2>
+  <div class="grid">
+    <label>Exposure time <input type="number" id="tExp" value="30" min="0.1" step="0.1"> s</label>
+    <label>Dose ladder, time per step <input type="number" id="tDose" value="10" min="0.1" step="0.1"> s</label>
+    <label>Dose ladder, base time for all cells <input type="number" id="tBase" value="0" min="0" step="0.1"> s</label>
+    <label>Probe: time per square <input type="number" id="tProbe" value="0.6" min="0.1" step="0.1"> s</label>
+    <label>Probe: dark time between <input type="number" id="tGap" value="0.3" min="0" step="0.1"> s</label>
+    <label>Probe: grid <input type="number" id="pCols" value="16" min="2" max="32" step="1"> × <input type="number" id="pRows" value="12" min="2" max="24" step="1"></label>
+    <label><input type="checkbox" id="pTile" checked> Probe: tiles cover 100 % of the screen</label>
+    <label>Probe: square size if not tiled <input type="number" id="pSize" value="48" min="8" max="300" step="8"> px</label>
+    <label>Probe: full-white reference at start and end <input type="number" id="tRef" value="0" min="0" step="0.5"> s</label>
+    <label>Probe: drift reference tile after every <input type="number" id="pRefEvery" value="16" min="0" max="999" step="1"> tiles (0 = off; same centre tile each time)</label>
+    <label><button id="probeCsv">Download last probe run (CSV)</button></label>
+    <label>Delay before exposure <input type="number" id="tDelay" value="2" min="0" step="0.5"> s</label>
+    <label>Pattern fill <input type="number" id="fill" value="80" min="70" max="100" step="1"> % of the usable area</label>
+    <label>Corner text <select id="corner">
+      <option value="tl">top left</option><option value="tr">top right</option>
+      <option value="bl" selected>bottom left</option><option value="br">bottom right</option>
+      <option value="off">off</option></select></label>
+    <label>Measured power on sample <input type="number" id="pw" value="" min="0" step="0.001" placeholder="mW"> mW with <select id="pwArea"><option value="usable" selected>17 white usable area (W)</option><option value="full">05 white, whole DMD</option></select></label>
+    <label><input type="checkbox" id="beep" checked> Beep at start and end (and every 10 s in focus mode)</label>
+  </div>
+  <p class="sub" style="margin-top:8px"><b>Fill</b> (70–100 %) sets how much of the screen the patterns marked
+  <i>fill</i> use, centred, with L-shaped marks at the corners of the area. Line widths, gaps and squares stay in
+  exact pixels; only the layout grows (longer lines, larger patches, larger star, larger dose cells).
+  Full-field patterns always use the whole screen.</p>
+  <p class="sub">The corner text is projected too. If the UV is on while the screen is armed, it exposes that
+  corner of the wafer. At fill above about 85 % it lies inside the pattern area. Put it in the corner that is
+  blocked by the housing, or switch it off (H).</p>
+
+  <h2>PATTERNS (click a row or press the key · PNG = download at the current fill)</h2>
+  <table id="ptab">
+    <tr><th>Key</th><th>Pattern</th><th>Area</th><th></th></tr>
+  </table>
+
+  <h2>GREYSCALE FLAT-FIELD CORRECTION (key X toggles)</h2>
+  <div class="grid">
+    <label><input type="checkbox" id="corrOn"> Apply correction to all patterns</label>
+    <label>Target level <input type="number" id="corrTarget" value="90" min="30" max="100" step="1"> % of mean</label>
+    <label>Projector gamma <input type="number" id="corrGamma" value="2.2" min="0.5" max="4" step="0.1"></label>
+    <label>Max grey level used <input type="number" id="corrMax" value="255" min="1" max="255" step="1"> (top of the range where the projector responds)</label>
+    <label><input type="checkbox" id="lutOn" checked> Use measured grey curve (below) instead of gamma</label>
+    <label>Measured curve, level:power <input type="text" id="lutText" value="50:2.2, 55:3.8, 60:6.1, 65:8.9, 70:12.0, 75:15.8, 80:19.6, 85:24.6, 90:29.4, 95:34.2, 100:38.8, 105:41.3, 110:43.3, 115:43.7, 120:47.1, 125:47.3, 130:48.1, 135:48.2, 140:52.5, 145:59.4, 150:63.4, 155:71.9, 160:78.3, 165:78.3, 170:78.3, 175:78.3, 180:78.3, 185:78.3, 190:78.3, 195:78.3, 200:78.3, 255:78.3" style="width:420px"></label>
+    <label>Grey ramp levels <input type="text" id="rampLevels" value="255,200,180,175,170,165,160,155,150,140,130,120,110,100,90,80,70,60,50" style="width:420px"></label>
+    <label>Grey ramp square <input type="number" id="rampSize" value="256" min="16" max="768" step="16"> px (centre)</label>
+    <label>Probe grey level <input type="number" id="probeLevel" value="255" min="1" max="255" step="1"> (0–255)</label>
+  </div>
+  <div style="display:flex;gap:18px;align-items:flex-start;margin-top:8px">
+    <textarea id="corrMap" rows="7" cols="52" spellcheck="false" style="background:#1d1d22;border:1px solid #33333c;color:#fff;font:12px ui-monospace,monospace;padding:6px">105.8, 103.6, 101.8, 100.5, 99.7, 99.4, 99.2, 98.4, 98.0, 97.9, 97.9, 98.0, 97.9, 98.1, 98.4, 98.5, 99.6, 100.6, 102.1, 103.3, 104.9, 106.6, 108.6, 110.5, 112.6, 114.5, 112.2, 104.4, 104.4, 104.4, 104.4, 104.4
+103.8, 102.0, 100.3, 98.9, 97.9, 97.1, 96.9, 96.4, 96.0, 96.0, 95.8, 96.1, 96.0, 96.2, 96.4, 96.7, 97.5, 98.1, 99.6, 100.8, 102.2, 103.9, 105.7, 107.8, 110.0, 112.9, 113.7, 110.5, 110.5, 110.5, 110.5, 110.5
+101.8, 99.9, 98.3, 97.2, 96.3, 95.5, 94.8, 94.5, 94.3, 94.1, 93.9, 93.9, 93.9, 94.3, 94.1, 94.3, 95.0, 95.7, 96.7, 97.9, 99.1, 100.5, 102.1, 104.0, 106.2, 109.2, 111.8, 112.0, 112.0, 112.0, 112.0, 112.0
+99.9, 98.4, 97.2, 96.2, 95.5, 94.7, 93.8, 93.5, 93.4, 93.1, 93.0, 92.9, 92.7, 92.8, 92.6, 92.9, 93.7, 94.0, 94.8, 95.7, 96.8, 97.8, 99.3, 100.9, 102.8, 105.8, 108.6, 110.8, 110.8, 110.8, 110.8, 110.8
+98.9, 97.5, 96.5, 95.9, 95.2, 94.3, 93.6, 93.3, 93.4, 93.3, 92.9, 93.0, 93.1, 92.5, 91.8, 92.1, 92.7, 93.2, 93.8, 94.4, 95.4, 96.2, 97.4, 98.9, 100.6, 103.1, 105.6, 108.2, 108.2, 108.2, 108.2, 108.2
+99.0, 97.5, 96.5, 96.1, 95.4, 94.7, 94.0, 93.4, 93.8, 93.7, 93.6, 93.6, 93.7, 93.2, 92.6, 92.5, 92.7, 92.8, 93.2, 93.9, 94.2, 95.1, 96.1, 97.5, 99.1, 101.0, 103.1, 105.4, 105.4, 105.4, 105.4, 105.4
+98.9, 97.6, 96.5, 96.0, 95.5, 95.1, 94.7, 94.3, 94.7, 94.4, 94.4, 94.1, 94.1, 93.6, 93.3, 92.9, 92.7, 92.4, 92.7, 93.5, 93.4, 94.2, 95.1, 96.2, 97.6, 99.4, 101.5, 103.8, 103.8, 103.8, 103.8, 103.8
+99.0, 97.7, 96.8, 96.2, 95.7, 95.3, 94.7, 94.6, 95.4, 95.0, 95.1, 94.5, 94.3, 93.8, 93.5, 93.2, 93.0, 92.8, 92.9, 93.4, 93.3, 93.7, 94.3, 95.3, 96.8, 98.6, 100.4, 102.4, 102.4, 102.4, 102.4, 102.4
+99.0, 97.7, 97.2, 96.7, 96.4, 96.0, 95.6, 95.7, 96.4, 96.4, 96.2, 95.6, 95.0, 94.5, 94.3, 93.7, 93.5, 93.4, 93.4, 93.7, 93.4, 93.9, 94.4, 95.2, 96.7, 98.6, 100.2, 101.9, 101.9, 101.9, 101.9, 101.9
+99.8, 98.7, 98.0, 97.6, 97.4, 97.1, 97.2, 97.5, 98.0, 97.9, 97.3, 96.8, 95.8, 95.3, 95.3, 94.7, 94.4, 94.4, 94.3, 94.1, 93.9, 94.3, 94.9, 95.6, 96.9, 98.5, 100.3, 101.7, 101.7, 101.7, 101.7, 101.7
+100.6, 99.5, 98.8, 98.7, 98.5, 98.3, 98.2, 98.8, 99.3, 99.0, 97.8, 97.3, 96.7, 96.4, 96.2, 95.7, 95.4, 95.4, 95.1, 94.7, 94.7, 95.0, 95.6, 96.5, 97.7, 99.2, 100.8, 102.2, 102.2, 102.2, 102.2, 102.2
+101.7, 100.5, 100.0, 99.9, 99.6, 99.5, 99.6, 100.5, 100.6, 100.4, 98.9, 98.5, 98.2, 97.9, 97.4, 97.0, 96.8, 96.7, 96.2, 96.0, 96.0, 96.4, 97.1, 97.9, 98.8, 100.2, 101.9, 103.6, 103.6, 103.6, 103.6, 103.6
+103.1, 101.9, 101.6, 101.5, 101.2, 101.4, 101.8, 102.1, 102.0, 101.9, 100.7, 100.3, 99.8, 99.3, 98.7, 98.4, 98.1, 97.8, 97.5, 97.6, 97.6, 97.9, 98.6, 99.5, 100.3, 101.4, 103.0, 104.5, 104.5, 104.5, 104.5, 104.5
+103.6, 102.3, 102.2, 102.4, 102.1, 102.3, 102.7, 103.0, 103.1, 102.9, 102.0, 101.3, 100.6, 99.9, 99.4, 99.0, 98.4, 98.3, 98.1, 98.2, 98.5, 98.8, 99.7, 100.4, 101.0, 102.0, 103.6, 105.1, 105.1, 105.1, 105.1, 105.1
+103.9, 102.5, 102.0, 102.3, 102.2, 102.4, 102.8, 103.4, 103.3, 102.9, 102.3, 101.6, 100.9, 100.2, 99.7, 99.2, 99.0, 98.9, 98.5, 98.6, 99.1, 99.7, 100.5, 101.1, 101.7, 102.6, 104.3, 105.5, 105.5, 105.5, 105.5, 105.5
+104.0, 102.5, 102.1, 102.1, 102.0, 102.4, 102.7, 102.8, 102.7, 102.2, 102.0, 101.3, 100.8, 100.1, 99.9, 99.3, 99.2, 99.1, 98.8, 99.3, 99.9, 100.6, 101.4, 102.0, 102.8, 103.5, 105.3, 106.8, 106.8, 106.8, 106.8, 106.8
+103.7, 102.4, 102.1, 101.9, 101.9, 102.1, 102.6, 102.2, 102.5, 102.0, 101.8, 101.3, 100.6, 100.2, 100.2, 99.7, 99.5, 99.4, 99.6, 100.2, 101.1, 101.9, 103.0, 103.7, 104.4, 105.0, 106.6, 108.3, 108.3, 108.3, 108.3, 108.3
+104.1, 102.9, 102.3, 101.9, 101.9, 102.4, 102.9, 102.5, 102.7, 102.4, 102.3, 101.7, 100.9, 100.6, 100.5, 100.5, 100.4, 100.4, 100.7, 101.4, 102.6, 103.6, 104.8, 105.6, 106.1, 107.0, 108.4, 109.6, 109.6, 109.6, 109.6, 109.6
+104.2, 102.8, 102.1, 101.9, 102.1, 102.5, 102.8, 102.7, 102.6, 101.9, 101.6, 101.3, 100.7, 100.6, 100.5, 100.8, 101.1, 101.3, 101.6, 102.3, 103.7, 104.9, 106.2, 106.9, 107.4, 108.4, 109.6, 110.6, 110.6, 110.6, 110.6, 110.6
+104.0, 102.6, 101.8, 101.6, 102.0, 102.3, 102.4, 102.4, 102.2, 101.8, 101.3, 100.8, 100.5, 100.5, 100.6, 101.1, 101.5, 101.9, 102.4, 103.5, 105.1, 106.3, 107.4, 108.0, 108.8, 109.7, 111.0, 112.0, 112.0, 112.0, 112.0, 112.0
+103.4, 102.2, 101.4, 101.1, 101.6, 102.0, 102.2, 101.8, 101.5, 101.3, 100.8, 100.4, 100.2, 100.4, 100.7, 101.3, 101.7, 102.3, 103.2, 104.4, 106.2, 107.4, 108.3, 108.7, 109.4, 110.3, 111.8, 112.9, 112.9, 112.9, 112.9, 112.9
+101.9, 101.2, 100.7, 100.5, 100.6, 101.1, 101.0, 100.6, 100.5, 100.4, 100.2, 99.8, 99.7, 100.1, 100.9, 101.6, 102.1, 102.6, 103.6, 104.8, 106.4, 107.8, 108.8, 109.4, 109.7, 110.6, 111.9, 113.0, 113.0, 113.0, 113.0, 113.0
+100.7, 100.0, 99.5, 99.2, 99.1, 99.8, 100.0, 99.5, 99.5, 99.6, 99.5, 99.4, 99.3, 99.5, 100.8, 101.2, 101.8, 102.6, 103.4, 104.9, 106.5, 107.7, 108.7, 109.1, 109.2, 110.3, 111.2, 112.4, 112.4, 112.4, 112.4, 112.4
+99.0, 98.8, 98.2, 97.7, 97.4, 97.7, 98.2, 98.4, 98.4, 98.4, 98.3, 98.4, 98.7, 98.9, 100.3, 100.7, 101.3, 101.9, 102.9, 104.5, 106.3, 107.1, 108.3, 108.6, 108.6, 109.7, 110.5, 111.5, 111.5, 111.5, 111.5, 111.5</textarea>
+    <p class="sub" style="max-width:520px">Measured map, one row per line from the DMD top, values left to right (any unit, e.g. µW per
+    tile from the probe). It is interpolated smoothly over the DMD. Every lit pixel brighter than the target is dimmed to
+    the target using the measured grey curve (or gamma if that is off); pixels at or below the target stay at full.
+    Gamma converts grey level to light: test it by running the probe with "Probe grey level" at e.g. 255, 200 and 150.
+    Light ∝ (level/255)<sup>gamma</sup>. Then run the probe with the correction on: the tiles should come out flat.
+    The pre-filled map is the mean of two 32 × 24 probes of 10 Nov without correction (10:58 and 13:05; tiles of 32 px,
+    LED warmed up, low bandwidth, drift reference), neighbour-weighted smoothing (sigma 0.6 tiles), % of mean. Target 90. The camera map (greymap_camera_v4_64x48.csv) did not match the power meter.
+    Old power-meter map (alignment v1, 8 × 6, µW): 23.1 22.9 21.5 21.7 21.6 22.0 21.5 9.6 / 23.1 20.8 20.9 19.7 19.5 19.4 20.5 17.9 /
+    22.0 20.9 19.9 19.4 18.0 18.1 19.4 21.1 / 21.7 20.6 19.7 19.2 18.8 18.6 19.5 21.2 / 20.6 20.1 19.8 19.3 18.6 19.2 19.8 21.6 /
+    19.7 19.4 18.8 18.6 19.0 18.7 19.7 20.9.</p>
+  </div>
+  <div id="corrInfo" class="sub"></div>
+
+  <h2>USABLE AREA (avoid the dark corner)</h2>
+  <div class="grid">
+    <label><input type="checkbox" id="useOn" checked> Use only this part of the DMD (black outside; not for 05 White, 06 Black, probe, ramp)</label>
+    <label>x from <input type="number" id="useX0" value="0" min="0" max="1024" step="8"> to <input type="number" id="useX1" value="896" min="64" max="1024" step="8"> px</label>
+    <label>y from <input type="number" id="useY0" value="0" min="0" max="768" step="8"> to <input type="number" id="useY1" value="768" min="64" max="768" step="8"> px</label>
+  </div>
+  <p class="dim" id="useInfo"></p>
+
+  <h2>CUSTOM IMAGE (key U)</h2>
+  <div class="row" style="display:flex;gap:12px;align-items:center"><input type="file" id="customFile" accept="image/png,image/bmp,image/gif,image/jpeg"><span id="customInfo" class="dim">no image loaded</span></div>
+  <p class="sub">Any image, shown 1:1 and centred (no scaling). Pixels with brightness 128 or more become white (mirror ON),
+  the rest black. Use 1024 × 768 PNG files for exact placement. After loading, press U to arm it like any other pattern.</p>
+
+  <h2>KEYS ON THE ARMED (BLACK) SCREEN</h2>
+  <table>
+    <tr><td><kbd>Space</kbd></td><td>Start exposure (delay, then pattern for the set time, then black)</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Abort a running exposure immediately / back to this menu</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Time ±1 s &nbsp; <kbd>PgUp</kbd> <kbd>PgDn</kbd> ±10 s &nbsp; <kbd>←</kbd> <kbd>→</kbd> ±0.1 s</td></tr>
+    <tr><td><kbd>T</kbd></td><td>Type a time in seconds, <kbd>Enter</kbd> to set, <kbd>Esc</kbd> to cancel</td></tr>
+    <tr><td><kbd>M</kbd></td><td>Dose ladder: type the base (minimum) time that all cells get first, <kbd>Enter</kbd> to set</td></tr>
+    <tr><td><kbd>P</kbd></td><td>Type a fill in percent (70–100), <kbd>Enter</kbd> to set &nbsp; <kbd>+</kbd> <kbd>-</kbd> fill ±5 %</td></tr>
+    <tr><td><kbd>O</kbd></td><td><b>Focus mode</b>: pattern stays on until <kbd>O</kbd> or <kbd>Esc</kbd>. Time (and dose, if power is set) goes in the log</td></tr>
+    <tr><td><kbd>V</kbd></td><td>Preview the pattern while the key is held (UV must be off)</td></tr>
+    <tr><td><kbd>1</kbd>…<kbd>9</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>C</kbd> <kbd>L</kbd> <kbd>G</kbd> <kbd>K</kbd> <kbd>J</kbd> <kbd>D</kbd> <kbd>Q</kbd> <kbd>R</kbd> <kbd>U</kbd></td><td>Change pattern (Q = uniformity probe, R = grey ramp, U = custom image)</td></tr>
+    <tr><td><kbd>X</kbd></td><td>Greyscale flat-field correction on/off</td></tr>
+    <tr><td><kbd>H</kbd></td><td>Hide / show corner text &nbsp; <kbd>S</kbd> sound on/off &nbsp; <kbd>F</kbd> fullscreen</td></tr>
+  </table>
+
+  <h2>SESSION LOG <button id="copy">copy</button></h2>
+  <div id="log"></div>
+  <p class="sub">The log lives only in this page and is lost on reload. Copy it to your notebook.</p>
+</div>
+
+<script>
+const FONT = {"0": "01110 10001 10011 10101 11001 10001 01110", "1": "00100 01100 00100 00100 00100 00100 01110", "2": "01110 10001 00001 00010 00100 01000 11111", "3": "11111 00010 00100 00010 00001 10001 01110", "4": "00010 00110 01010 10010 11111 00010 00010", "5": "11111 10000 11110 00001 00001 10001 01110", "6": "00110 01000 10000 11110 10001 10001 01110", "7": "11111 00001 00010 00100 01000 01000 01000", "8": "01110 10001 10001 01110 10001 10001 01110", "9": "01110 10001 10001 01111 00001 00010 01100", "A": "01110 10001 10001 11111 10001 10001 10001", "B": "11110 10001 10001 11110 10001 10001 11110", "C": "01110 10001 10000 10000 10000 10001 01110", "D": "11110 10001 10001 10001 10001 10001 11110", "E": "11111 10000 10000 11110 10000 10000 11111", "F": "11111 10000 10000 11110 10000 10000 10000", "G": "01110 10001 10000 10111 10001 10001 01111", "H": "10001 10001 10001 11111 10001 10001 10001", "I": "01110 00100 00100 00100 00100 00100 01110", "J": "00111 00010 00010 00010 00010 10010 01100", "K": "10001 10010 10100 11000 10100 10010 10001", "L": "10000 10000 10000 10000 10000 10000 11111", "M": "10001 11011 10101 10101 10001 10001 10001", "N": "10001 11001 10101 10011 10001 10001 10001", "O": "01110 10001 10001 10001 10001 10001 01110", "P": "11110 10001 10001 11110 10000 10000 10000", "Q": "01110 10001 10001 10001 10101 10010 01101", "R": "11110 10001 10001 11110 10100 10010 10001", "S": "01111 10000 10000 01110 00001 00001 11110", "T": "11111 00100 00100 00100 00100 00100 00100", "U": "10001 10001 10001 10001 10001 10001 01110", "V": "10001 10001 10001 10001 10001 01010 00100", "W": "10001 10001 10001 10101 10101 11011 01010", "X": "10001 10001 01010 00100 01010 10001 10001", "Y": "10001 10001 01010 00100 00100 00100 00100", "Z": "11111 00001 00010 00100 01000 10000 11111", " ": "00000 00000 00000 00000 00000 00000 00000", "-": "00000 00000 00000 11111 00000 00000 00000", ".": "00000 00000 00000 00000 00000 01100 01100", ":": "00000 01100 01100 00000 01100 01100 00000", "/": "00001 00010 00010 00100 01000 01000 10000", "=": "00000 00000 11111 00000 11111 00000 00000", "+": "00000 00100 00100 11111 00100 00100 00000", "(": "00010 00100 01000 01000 01000 00100 00010", ")": "01000 00100 00010 00010 00010 00100 01000", ",": "00000 00000 00000 00000 01100 00100 01000", "%": "11001 11010 00010 00100 01000 01011 10011", ">": "01000 00100 00010 00001 00010 00100 01000", "<": "00010 00100 01000 10000 01000 00100 00010", "!": "00100 00100 00100 00100 00100 00000 00100", "?": "01110 10001 00001 00010 00100 00000 00100", "#": "01010 01010 11111 01010 11111 01010 01010", "_": "00000 00000 00000 00000 00000 00000 11111", "'": "00100 00100 01000 00000 00000 00000 00000"};
+const W = 1024, H = 768;
+
+// =============================================================== bitmap + drawing primitives
+function newBmp(){ return new Uint8Array(W*H); }
+function rect(b, x, y, w, h){
+  x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
+  const x0 = Math.max(0, x), y0 = Math.max(0, y), x1 = Math.min(W, x + w), y1 = Math.min(H, y + h);
+  for (let j = y0; j < y1; j++) b.fill(255, j*W + x0, j*W + x1);
+}
+function text(b, x, y, s, sc){
+  sc = sc || 2;
+  for (const ch of String(s).toUpperCase()){
+    const g = (FONT[ch] || FONT[' ']).split(' ');
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++)
+      if (g[r][c] === '1') rect(b, x + c*sc, y + r*sc, sc, sc);
+    x += 6*sc;
+  }
+}
+const tw = (s, sc) => String(s).length*6*(sc||2) - (sc||2);
+function ctext(b, y, s, sc, x0, x1){ x0 = x0 ?? 0; x1 = x1 ?? W; text(b, Math.floor((x0 + x1 - tw(s, sc))/2), y, s, sc); }
+function corners(b, x0, y0, x1, y1, t, arm){
+  t = t || 2; arm = arm || 20;
+  rect(b, x0, y0, arm, t); rect(b, x0, y0, t, arm);
+  rect(b, x1-arm, y0, arm, t); rect(b, x1-t, y0, t, arm);
+  rect(b, x0, y1-t, arm, t); rect(b, x0, y1-arm, t, arm);
+  rect(b, x1-arm, y1-t, arm, t); rect(b, x1-t, y1-arm, t, arm);
+}
+function frame(b, x0, y0, w, h, t, arm){ corners(b, x0-6, y0-6, x0+w+6, y0+h+6, t || 2, arm || 14); }
+function areaFrame(b, R){ corners(b, R.x0, R.y0, R.x1, R.y1, 2, 20); rect(b, R.x0+6, R.y0+6, 5, 5); }
+function screenFrame(b){ corners(b, 8, 8, W-8, H-8, 3, 26); rect(b, 8, 48, 12, 12); }
+function disc(b, cx, cy, d){
+  const r2 = (d/2)*(d/2);
+  for (let y = Math.floor(cy-d); y <= cy+d; y++) for (let x = Math.floor(cx-d); x <= cx+d; x++)
+    if ((x-cx+0.5)**2 + (y-cy+0.5)**2 <= r2) rect(b, x, y, 1, 1);
+}
+// usable area of the DMD (patterns are centred in it and blacked out outside it)
+function usable(){
+  const on = document.getElementById('useOn'), g = id => +document.getElementById(id).value;
+  if (!on || !on.checked) return {x0: 0, y0: 0, x1: W, y1: H, on: false};
+  let x0 = Math.max(0, Math.min(W - 64, Math.round(g('useX0') || 0))), x1 = Math.max(x0 + 64, Math.min(W, Math.round(g('useX1') || W)));
+  let y0 = Math.max(0, Math.min(H - 64, Math.round(g('useY0') || 0))), y1 = Math.max(y0 + 64, Math.min(H, Math.round(g('useY1') || H)));
+  return {x0, y0, x1, y1, on: !(x0 === 0 && y0 === 0 && x1 === W && y1 === H)};
+}
+function usableKey(){ const u = usable(); return u.on ? '|U' + [u.x0, u.y0, u.x1, u.y1].join(',') : ''; }
+const NOCLIP = new Set(['5', '6', 'q', 'r']);      // measurement patterns stay full field
+function area(fill){
+  const f = Math.min(100, Math.max(70, fill))/100, U = usable(), UW = U.x1 - U.x0, UH = U.y1 - U.y0;
+  const w = Math.round(UW*f), h = Math.round(UH*f), x0 = U.x0 + Math.floor((UW-w)/2), y0 = U.y0 + Math.floor((UH-h)/2);
+  const R = {x0, y0, x1: x0+w, y1: y0+h, w, h};
+  R.cx0 = R.x0 + 12; R.cx1 = R.x1 - 12; R.cy0 = R.y0 + 28; R.cy1 = R.y1 - 10;
+  R.cw = R.cx1 - R.cx0; R.ch = R.cy1 - R.cy0;
+  return R;
+}
+function title(b, R, s){ ctext(b, R.y0 + 7, s, 2, R.x0, R.x1); }
+
+// compact ladder block (used by 07 and 08)
+function ladderCell(b, x0, y0, widths, PW, PH, gap, tag, ls){
+  ls = ls || 2; let y = y0;
+  if (tag){ text(b, x0, y, tag, ls); y += 8*ls; }
+  const c1 = x0 + 12*ls + 6, c2 = c1 + PW + 18, c3 = c2 + PW + 18;
+  for (const w of widths){
+    text(b, x0, y + Math.floor((PH - 7*ls)/2), w, ls);
+    for (let i = 0; i < PW; i += 2*w) rect(b, c1+i, y, Math.min(w, PW-i), PH);
+    for (let i = 0; i < PH; i += 2*w) rect(b, c2, y+i, PW, Math.min(w, PH-i));
+    for (let i = 0; i < PW; i += Math.max(4*w, 12)) rect(b, c3+i, y, Math.min(w, PW-i), PH);
+    y += PH + gap;
+  }
+  y += 4; let xs = c1;
+  for (const w of widths){ rect(b, xs, y, w, w); xs += Math.max(3*w, 14); }
+  y += Math.max(...widths) + 4;
+  return [c3 + PW - x0, y - y0];
+}
+
+// =============================================================== patterns
+const GEN = {};
+
+GEN['1'] = R => {                         // resolution ladder
+  const b = newBmp(); areaFrame(b, R); title(b, R, '01 RESOLUTION LADDER  W = LINE WIDTH IN PX');
+  const WID = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16];
+  const colW = Math.floor(R.cw/3), PW = colW - 32 - 20;
+  const cols = [[R.cx0, 'DENSE VERT', 'v'], [R.cx0 + colW, 'DENSE HORIZ', 'h'], [R.cx0 + 2*colW, 'ISOLATED', 'i']];
+  for (const [x, hdr] of cols) text(b, x + 32, R.cy0, hdr, 2);
+  const ry = R.cy0 + 22, pitch = Math.floor((R.cy1 - ry)/WID.length), PH = pitch - 8;
+  WID.forEach((w, k) => {
+    const y = ry + k*pitch;
+    for (const [x, , kind] of cols){
+      text(b, x, y + Math.floor((PH - 14)/2), w, 2);
+      const px = x + 32;
+      if (kind === 'v') for (let i = 0; i < PW; i += 2*w) rect(b, px+i, y, Math.min(w, PW-i), PH);
+      else if (kind === 'h') for (let i = 0; i < PH; i += 2*w) rect(b, px, y+i, PW, Math.min(w, PH-i));
+      else for (let i = 0; i < PW; i += Math.max(6*w, 34)) rect(b, px+i, y, Math.min(w, PW-i), PH);
+    }
+  });
+  return b;
+};
+
+GEN['2'] = () => {                        // calibration grid, full field
+  const b = newBmp(); screenFrame(b);
+  text(b, 70, 24, '02 CALIBRATION GRID  CROSS EVERY 64 PX  FULL FIELD', 2);
+  const xs = [], ys = [];
+  for (let k = -8; k <= 8; k++){ const v = 512 + 64*k; if (v >= 24 && v <= W-24) xs.push(v); }
+  for (let k = -6; k <= 6; k++){ const v = 384 + 64*k; if (v >= 60 && v <= H-24) ys.push(v); }
+  for (const cy of ys) for (const cx of xs){ rect(b, cx-7, cy, 15, 1); rect(b, cx, cy-7, 1, 15); }
+  rect(b, 496, 383, 33, 3); rect(b, 511, 368, 3, 33);
+  ys.forEach((cy, j) => { if (j % 2) return; xs.forEach((cx, i) => {
+    if (i % 2 === 0 && cy+32 <= H-24 && cx+32 <= W-24) rect(b, cx+32, cy+32, 1, 1); }); });
+  return b;
+};
+
+GEN['3'] = R => {                         // features
+  const b = newBmp(); areaFrame(b, R); title(b, R, '03 FEATURES  NUMBERS = SIZE IN PX');
+  const S = [1, 2, 3, 4, 6, 8, 12], cp = Math.floor(R.cw/7), CX = S.map((_, i) => R.cx0 + cp*i);
+  const Lc = Math.min(70, cp - 16);
+  const need = 36 + 108 + (24 + Lc) + (44 + Lc) + 16 + 78;
+  const gap = Math.max(4, Math.floor((R.ch - need)/5));
+  let y = R.cy0;
+  text(b, R.cx0, y, 'ISOLATED SQUARES', 2);
+  S.forEach((s, i) => rect(b, CX[i], y+24, s, s));
+  y += 36 + gap; text(b, R.cx0, y, 'SQUARE ARRAY  PITCH 3X', 2);
+  S.forEach((s, i) => { for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) rect(b, CX[i] + k*3*s, y+24 + j*3*s, s, s); });
+  y += 108 + gap; text(b, R.cx0, y, '90 DEG ELBOW', 2);
+  S.forEach((s, i) => { const L = Math.min(Lc, Math.max(8*s, 22)); rect(b, CX[i], y+24, L, s); rect(b, CX[i], y+24, s, L); });
+  y += 24 + Lc + gap; text(b, R.cx0, y, 'LINE END  AND  CROSS', 2);
+  S.forEach((s, i) => { const L = Math.min(Lc, Math.max(8*s, 22));
+    rect(b, CX[i], y+24, L, s);
+    rect(b, CX[i], y+44 + Math.floor(L/2), L, s); rect(b, CX[i] + Math.floor(L/2), y+44, s, L); });
+  y += 44 + Lc + gap; S.forEach((s, i) => text(b, CX[i], y, s, 2));
+  y += 16 + gap; text(b, R.cx0, y, 'DUTY CYCLE  LINE 3 PX  LINE:SPACE', 2);
+  const gw = Math.min(260, Math.floor((R.cw - 60)/3));
+  [1, 2, 3].forEach((d, k) => {
+    const x = R.cx0 + k*(gw + 30);
+    for (let i = 0; i + 3 <= gw; i += 3*(1+d)) rect(b, x+i, y+20, 3, 40);
+    text(b, x, y+66, '1:' + d, 2);
+  });
+  return b;
+};
+
+GEN['4'] = R => {                         // Siemens star + edges
+  const b = newBmp(); areaFrame(b, R); title(b, R, '04 SIEMENS STAR 36 SPOKES');
+  const s = Math.round(0.13*Math.min(R.w, R.h));
+  const blocks = [[R.cx0+2, R.cy0+2, 5, '5 DEG'], [R.cx1-2-s, R.cy0+2, 95, '95 DEG'],
+                  [R.cx0+2, R.cy1-14-s, 45, '45 DEG'], [R.cx1-2-s, R.cy1-14-s, 0, '0 DEG']];
+  for (const [x0, y0, deg, lab] of blocks){
+    const a = deg*Math.PI/180, c = Math.cos(a), sn = Math.sin(a);
+    for (let j = 0; j < s; j++) for (let i = 0; i < s; i++)
+      if ((i - s/2)*c + (j - s/2)*sn > 0) rect(b, x0+i, y0+j, 1, 1);
+    text(b, x0, y0 + s + 4, lab, 1);
+  }
+  const cx = Math.floor((R.cx0 + R.cx1)/2), cy = Math.floor((R.cy0 + R.cy1)/2);   // centred in the (usable) area
+  let Rr = Math.min(Math.floor(R.ch/2) - 2, Math.floor(R.cw/2) - 2);
+  Rr = Math.min(Rr, Math.floor(Math.hypot(cx - (R.cx0+2+s), cy - (R.cy0+2+s))) - 8);
+  for (let y = cy-Rr; y <= cy+Rr; y++) for (let x = cx-Rr; x <= cx+Rr; x++){
+    const dx = x - cx, dy = y - cy, r2 = dx*dx + dy*dy;
+    if (r2 > Rr*Rr || r2 < 144) continue;
+    const sec = Math.floor((Math.atan2(dy, dx) + Math.PI)/(2*Math.PI/72));
+    if (sec % 2 === 0) rect(b, x, y, 1, 1);
+  }
+  return b;
+};
+
+GEN['5'] = () => newBmp().fill(255);
+GEN['w'] = () => newBmp().fill(255);          // clipped to the usable area by the usable-area setting
+GEN['6'] = () => newBmp();
+
+GEN['7'] = R => {                         // centred ladder (fixed size), crosshair to the area edge
+  const b = newBmp(); areaFrame(b, R); title(b, R, '07 CENTRED LADDER  ON-AXIS');
+  const WC = [1, 2, 3, 4, 5, 6, 8, 10];
+  const [bw, bh] = ladderCell(newBmp(), 0, 0, WC, 80, 26, 6);
+  const x0 = Math.floor((W - bw)/2), y0 = Math.floor((H - bh)/2);
+  ladderCell(b, x0, y0, WC, 80, 26, 6); frame(b, x0, y0, bw, bh);
+  rect(b, R.x0+30, 384, x0-30 - (R.x0+30), 1); rect(b, x0+bw+30, 384, R.x1-30 - (x0+bw+30), 1);
+  rect(b, 512, R.y0+30, 1, y0-30 - (R.y0+30)); rect(b, 512, y0+bh+30, 1, R.y1-30 - (y0+bh+30));
+  return b;
+};
+
+GEN['8'] = () => {                        // field map, full field
+  const b = newBmp(); screenFrame(b);
+  text(b, 70, 24, '08 FIELD MAP  SAME BLOCK 9 PLACES', 2);
+  const WF = [1, 2, 3, 4, 5, 6, 8];
+  const [cw, ch] = ladderCell(newBmp(), 0, 0, WF, 48, 22, 4, 'XX');
+  const XS = [44, Math.floor((W - cw)/2), W - cw - 44], YS = [52, Math.floor((H - ch)/2), H - ch - 44];
+  const TAGS = [['NW', 'N', 'NE'], ['W', 'C', 'E'], ['SW', 'S', 'SE']];
+  YS.forEach((y, r) => XS.forEach((x, c) => { ladderCell(b, x, y, WF, 48, 22, 4, TAGS[r][c]); frame(b, x, y, cw, ch, 2, 10); }));
+  return b;
+};
+
+GEN['9'] = () => {
+  const b = newBmp();
+  for (const [x, y] of [[512, 384], [72, 72], [W-72, 72], [72, H-72], [W-72, H-72]]) rect(b, x-8, y-8, 16, 16);
+  return b;
+};
+GEN['a'] = () => { const b = newBmp(); disc(b, 256, 384, 32); disc(b, 768, 384, 32); return b; };
+GEN['b'] = () => { const b = newBmp(); disc(b, 512, 128, 32); disc(b, 512, 640, 32); return b; };
+GEN['c'] = () => { const b = newBmp(); disc(b, 512, 384, 32); return b; };
+
+GEN['l'] = R => {                         // 1 px lines, variable gap
+  const b = newBmp(); areaFrame(b, R); title(b, R, '13 1 PX LINES  GAP 1-14 PX (2-31 UM)');
+  const NL = 5, SLOT = Math.floor(R.cw/8), X0 = R.cx0 + Math.floor((R.cw - 8*SLOT)/2);
+  const LEN = Math.max(40, Math.floor((R.ch - 343)/2)), HL = SLOT - 10;
+  const um = g => (g*2.2).toFixed(1);
+  function labels(k, g, y){
+    const sx = X0 + k*SLOT, lab = g === null ? 'ISO' : String(g), sub = g === null ? '-' : um(g);
+    text(b, sx + Math.floor((SLOT - tw(lab, 2))/2), y, lab, 2);
+    text(b, sx + Math.floor((SLOT - tw(sub, 1))/2), y + 17, sub, 1);
+    return sx;
+  }
+  function vrow(gaps, y){ gaps.forEach((g, k) => {
+    const sx = labels(k, g, y), n = g === null ? 1 : NL, gg = g || 0, gw = n + (n-1)*gg;
+    const lx = sx + Math.floor((SLOT - gw)/2);
+    for (let i = 0; i < n; i++) rect(b, lx + i*(1+gg), y+28, 1, LEN); }); }
+  function hrow(gaps, y){ gaps.forEach((g, k) => {
+    const sx = labels(k, g, y), n = g === null ? 1 : NL, gg = g || 0;
+    for (let i = 0; i < n; i++) rect(b, sx+5, y+28 + i*(1+gg), HL, 1); }); }
+  const r1 = [1, 2, 3, 4, 5, 6, 7], r2 = [8, 9, 10, 11, 12, 13, 14, null];
+  let y = R.cy0;
+  text(b, X0, y, 'VERTICAL LINES  5 PER GROUP', 2); y += 20;
+  vrow(r1, y); y += 28 + LEN + 12;
+  vrow(r2, y); y += 28 + LEN + 14;
+  text(b, X0, y, 'HORIZONTAL LINES  5 PER GROUP', 2); y += 20;
+  hrow(r1, y); y += 28 + 61 + 12;
+  hrow(r2, y); y += 28 + 61 + 12;
+  text(b, X0, y, 'BIG NUMBER = GAP IN PX.  SMALL = UM AT 2.2 UM/PX (5X ZOOM, NOMINAL).', 1);
+  text(b, X0, y + 12, 'CALIBRATE THE SCALE WITH 02.  ALL LINES ARE EXACTLY 1 PX WIDE.', 1);
+  return b;
+};
+
+function starAt(b, cx0, cy0, r){
+  for (let y = cy0-r; y <= cy0+r; y++) for (let x = cx0-r; x <= cx0+r; x++){
+    const dx = x - cx0, dy = y - cy0, r2 = dx*dx + dy*dy;
+    if (r2 > r*r || r2 < 16) continue;
+    if (Math.floor((Math.atan2(dy, dx) + Math.PI)/(2*Math.PI/72)) % 2 === 0) rect(b, x, y, 1, 1);
+  }
+}
+// parfocal split: one half white (lights an old developed pattern), fine targets right next to the split
+function splitPattern(vertical){
+  const b = newBmp(), n = 9;
+  if (vertical){
+    rect(b, 0, 0, 496, H);                                               // white left half
+    [1, 2, 3].forEach((g, k) => {
+      const y = 290 + k*64;
+      for (let i = 0; i < n; i++) rect(b, 512 + i*(1+g), y, 1, 44);      // vertical 1 px lines, gap g
+      for (let i = 0; i < n; i++) rect(b, 560, y + i*(1+g), 50, 1);       // horizontal 1 px lines, gap g
+      text(b, 618, y + 15, g, 2);
+    });
+    starAt(b, 720, 384, 48);
+    text(b, 512, 250, '15 PARFOCAL SPLIT  OLD PATTERN LEFT, MARKER NEXT TO THE SPLIT', 1);
+  } else {
+    rect(b, 0, 0, W, 368);                                               // white top half
+    [1, 2, 3].forEach((g, k) => {
+      const x = 330 + k*80;
+      for (let i = 0; i < n; i++) rect(b, x, 384 + i*(1+g), 50, 1);      // horizontal 1 px lines
+      for (let i = 0; i < n; i++) rect(b, x + i*(1+g), 432, 1, 44);      // vertical 1 px lines
+      text(b, x + 20, 484, g, 2);
+    });
+    starAt(b, 650, 440, 48);
+    text(b, 330, 520, '16 PARFOCAL SPLIT  OLD PATTERN ABOVE, MARKER NEXT TO THE SPLIT', 1);
+  }
+  return b;
+}
+GEN['k'] = () => splitPattern(true);
+GEN['j'] = () => splitPattern(false);
+GEN['g'] = () => {                        // compact focus target in the centre (~0.75 x 0.55 mm at 5x)
+  const b = newBmp(), cx0 = 512, cy0 = 384, r = 48;
+  for (let y = cy0-r; y <= cy0+r; y++) for (let x = cx0-r; x <= cx0+r; x++){
+    const dx = x - cx0, dy = y - cy0, r2 = dx*dx + dy*dy;
+    if (r2 > r*r || r2 < 16) continue;
+    if (Math.floor((Math.atan2(dy, dx) + Math.PI)/(2*Math.PI/72)) % 2 === 0) rect(b, x, y, 1, 1);
+  }
+  [1, 2, 3].forEach((g, k) => {
+    const n = 9, gw = n + (n-1)*g, y = cy0 - 60 + k*42;
+    for (let i = 0; i < n; i++) rect(b, cx0 - r - 14 - gw + i*(1+g), y, 1, 34);   // vertical 1 px lines, left
+    for (let i = 0; i < n; i++) rect(b, cx0 + r + 14, y + i*(1+g), 34, 1); // horizontal, right
+    text(b, cx0 - r - 14 - gw - 10, y + 13, g, 1); text(b, cx0 + r + 52, y + 13, g, 1);
+  });
+  rect(b, cx0 - 170, cy0, 40, 1); rect(b, cx0 + 130, cy0, 40, 1);               // crosshair arms
+  rect(b, cx0, cy0 - 120, 1, 40); rect(b, cx0, cy0 + 80, 1, 40);
+  frame(b, cx0 - 176, cy0 - 126, 352, 252, 2, 14);
+  text(b, cx0 - 176, cy0 - 146, '14 FOCUS TARGET  1 PX LINES, GAP 1-3 PX', 1);
+  return b;
+};
+
+function doseStep(R, step){                // dose ladder, 8 cells, cell n lit in steps 1..n
+  const b = newBmp(); areaFrame(b, R);
+  title(b, R, 'DOSE LADDER  STEP ' + step + ' OF 8  EQUAL TIME PER STEP');
+  const G = 26, CW = Math.floor((R.cw - 3*G)/4), CH = Math.floor((R.ch - G)/2);
+  const BW = 4*CW + 3*G, BH = 2*CH + G, BX = R.cx0 + Math.floor((R.cw - BW)/2), BY = R.cy0;
+  const LSW = [1, 2, 3, 4, 6, 8];
+  const pw = Math.floor((CW - 12 - 10)/2), pitch = Math.floor((CH - 28 - 18 - 44)/6), ph = pitch - 6;
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++){
+    const n = r*4 + c + 1, x0 = BX + c*(CW + G), y0 = BY + r*(CH + G);
+    for (let i = 0; i < n; i++) rect(b, x0 + i*8, y0, 4, 4);            // index dots, always on
+    if (n < step) continue;
+    text(b, x0 + Math.floor(CW*0.45), y0 - 2, n + 'X', 2);
+    text(b, x0 + 12 + Math.floor(pw/2) - 2, y0 + 16, 'V', 1);
+    text(b, x0 + 22 + pw + Math.floor(pw/2) - 2, y0 + 16, 'H', 1);
+    let y = y0 + 28;
+    for (const w of LSW){
+      text(b, x0, y + Math.floor((ph - 7)/2), w, 1);
+      for (let i = 0; i < pw; i += 2*w) rect(b, x0+12+i, y, Math.min(w, pw-i), ph);
+      for (let i = 0; i < ph; i += 2*w) rect(b, x0+22+pw, y+i, pw, Math.min(w, ph-i));
+      y += pitch;
+    }
+    let xs = x0 + 12;
+    for (const w of LSW){ rect(b, xs, y+2, w, w); xs += 26; }
+    y += 16;
+    const Ll = Math.min(60, y0 + CH - y);
+    [1, 2, 3].forEach((w, k) => rect(b, x0 + 12 + k*26, y, w, Ll));
+    [2, 4].forEach((g, k) => { const xq = x0 + Math.floor(CW*0.58) + k*36; rect(b, xq, y, 1, Ll); rect(b, xq+1+g, y, 1, Ll); });
+  }
+  frame(b, BX, BY, BW, BH, 2, 14);                                      // always on
+  return b;
+}
+
+const PAT = [
+  ['1', '01 RESOLUTION LADDER', 'Resolution ladder: dense V, dense H, isolated', true],
+  ['2', '02 CALIBRATION GRID',  'Calibration grid, cross every 64 px', false],
+  ['3', '03 FEATURES',          'Squares, elbows, line ends, crosses, duty cycle', true],
+  ['4', '04 SIEMENS STAR',      'Siemens star + slanted edges', true],
+  ['5', '05 WHITE',             'White (flat field / uniformity)', false],
+  ['6', '06 BLACK',             'Black (contrast / stray light test)', false],
+  ['7', '07 CENTRED LADDER',    'Centred ladder, on-axis resolution (fixed size)', true],
+  ['8', '08 FIELD MAP',         'Field map, same block at 9 places', false],
+  ['9', '09 DEFOCUS DOTS',      'Defocus dots: centre + 4 corners', false],
+  ['a', '10 PUPIL HORIZONTAL',  'Pupil: two dots, horizontal', false],
+  ['b', '11 PUPIL VERTICAL',    'Pupil: two dots, vertical', false],
+  ['c', '12 NA SINGLE DOT',     'NA: single dot in the centre', false],
+  ['l', '13 LINE GAPS',         '1 px lines, gap 1-14 px (2-31 um at 5x)', true],
+  ['g', '14 FOCUS TARGET',      'Small focus target in the centre: star + 1 px lines', false],
+  ['k', '15 PARFOCAL SPLIT V',  'Camera parfocal: left half white, fine lines right of the split', false],
+  ['j', '16 PARFOCAL SPLIT H',  'Camera parfocal: top half white, fine lines below the split', false],
+  ['w', '17 WHITE USABLE AREA', 'White in the usable area only (power meter -> power density where you expose)', false],
+  ['d', 'DOSE LADDER',          'Dose ladder, 8 steps. Cell n gets n × step time', true],
+  ['r', 'GREY RAMP',            'Grey ramp: centre square at each grey level in turn, for the projector response (gamma)', false],
+  ['q', 'UNIFORMITY PROBE',     'Uniformity probe: full white, then a grid of small squares edge to edge, then full white again', false],
+];
+const INFO = Object.fromEntries(PAT.map(p => [p[0], {title: p[1], name: p[2], fill: p[3]}]));
+
+// cache of rendered ImageData, keyed by pattern + fill
+const cache = new Map();
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+function toImageData(b){
+  const id = new ImageData(W, H), d = id.data;
+  for (let i = 0, j = 0; i < b.length; i++, j += 4){ const v = b[i]; d[j] = d[j+1] = d[j+2] = v; d[j+3] = 255; }
+  return id;
+}
+// probe plan: full white (reference) -> squares row by row from DMD top-left, edge to edge -> full white
+function probeCfg(){
+  const S = Math.max(8, Math.min(300, Math.round(+$('pSize').value || 48)));
+  const C = Math.max(2, Math.min(32, Math.round(+$('pCols').value || 16))), Rw = Math.max(2, Math.min(24, Math.round(+$('pRows').value || 12)));
+  return {S, C, Rw, tile: $('pTile').checked, ref: Math.max(0, +$('tRef').value || 0), every: Math.max(0, Math.round(+$('pRefEvery').value || 0))};
+}
+function probePlan(){
+  const {S, C, Rw, tile, ref, every} = probeCfg(), plan = [];
+  // drift reference: the tile (or square) at the centre of the usable area, shown at the start and after every N tiles
+  const U = usable(), ux = (U.x0 + U.x1)/2, uy = (U.y0 + U.y1)/2;
+  let refTile;
+  if (tile){ const c = Math.min(C - 1, Math.floor(ux*C/W)), r = Math.min(Rw - 1, Math.floor(uy*Rw/H));
+    const x0 = Math.round(c*W/C), x1 = Math.round((c + 1)*W/C), y0 = Math.round(r*H/Rw), y1 = Math.round((r + 1)*H/Rw);
+    refTile = {kind: 'ref', row: r + 1, col: c + 1, x: (x0 + x1)/2, y: (y0 + y1)/2, x0, y0, w: x1 - x0, h: y1 - y0, size: (x1 - x0) + 'x' + (y1 - y0)};
+  } else refTile = {kind: 'ref', row: '', col: '', x: Math.round(ux), y: Math.round(uy), x0: Math.round(ux - S/2), y0: Math.round(uy - S/2), w: S, h: S, size: S};
+  if (ref > 0) plan.push({kind: 'white_start', row: '', col: '', x: 512, y: 384, size: 'full'});
+  if (every > 0) plan.push({...refTile});
+  let n = 0;
+  for (let r = 0; r < Rw; r++) for (let c = 0; c < C; c++){
+    if (tile){                                                   // tiles: every DMD pixel lit exactly once
+      const x0 = Math.round(c*W/C), x1 = Math.round((c + 1)*W/C), y0 = Math.round(r*H/Rw), y1 = Math.round((r + 1)*H/Rw);
+      plan.push({kind: 'square', row: r + 1, col: c + 1, x: (x0 + x1)/2, y: (y0 + y1)/2, x0, y0, w: x1 - x0, h: y1 - y0, size: (x1 - x0) + 'x' + (y1 - y0)});
+    } else {
+      const x0 = Math.round(c*(W - S)/(C - 1)), y0 = Math.round(r*(H - S)/(Rw - 1));   // squares reach the very edges
+      plan.push({kind: 'square', row: r + 1, col: c + 1, x: x0 + S/2, y: y0 + S/2, x0, y0, w: S, h: S, size: S});
+    }
+    if (every > 0 && ++n % every === 0) plan.push({...refTile});
+  }
+  if (ref > 0) plan.push({kind: 'white_end', row: '', col: '', x: 512, y: 384, size: 'full'});
+  return plan;
+}
+function rampPlan(){
+  const S = Math.max(16, Math.min(768, Math.round(+$('rampSize').value || 256)));
+  return $('rampLevels').value.split(/[\s,;]+/).map(Number).filter(v => v >= 0 && v <= 255)
+    .map(v => ({kind: 'grey', row: '', col: '', x: 512, y: 384, x0: 512 - (S >> 1), y0: 384 - (S >> 1), w: S, h: S, size: S, level: Math.round(v)}));
+}
+function rampBitmap(p){ const b = newBmp(); rect(b, p.x0, p.y0, p.w, p.h); for (let i = 0; i < b.length; i++) if (b[i]) b[i] = p.level; return b; }
+function probeBitmap(p){ const b = newBmp(); if (p.kind === 'square' || p.kind === 'ref') rect(b, p.x0, p.y0, p.w, p.h); else b.fill(255); return b; }
+function probeSteps(){ return probePlan().map(probeBitmap); }
+let lastProbeRun = null;
+// ------------------------------------------------ greyscale flat-field correction
+let corrVals = null, corrKeyCache = '';
+function corrKey(){ return [$('corrMap').value, $('corrTarget').value, $('corrGamma').value, $('corrMax').value, $('lutOn').checked, $('lutText').value].join('|'); }
+// Measured grey curve: "level:power" pairs -> monotone relative light Lrel[0..255] (1 = brightest), plus its inverse.
+function parseLut(){
+  const pts = [], re = /(\d+(?:\.\d+)?)\s*[:=]\s*(-?[\d.]+(?:e[-+]?\d+)?)/gi; let m;
+  while ((m = re.exec($('lutText').value))) pts.push([Math.max(0, Math.min(255, +m[1])), Math.max(0, +m[2])]);
+  pts.sort((a, b) => a[0] - b[0]);
+  if (pts.length < 2) return null;
+  // pool-adjacent-violators: make the curve non-decreasing (noise on the plateau must not create fake slopes)
+  const blocks = pts.map(p => ({x: [p[0]], s: p[1], n: 1}));
+  for (let i = 1; i < blocks.length; i++){
+    if (blocks[i].s/blocks[i].n < blocks[i - 1].s/blocks[i - 1].n){
+      const a = blocks[i - 1], b = blocks[i]; a.x.push(...b.x); a.s += b.s; a.n += b.n; blocks.splice(i, 1); i = Math.max(0, i - 2);
+    }
+  }
+  const P = []; blocks.forEach(b => b.x.forEach(x => P.push([x, b.s/b.n])));
+  const top = P[P.length - 1][1]; if (!(top > 0)) return null;
+  const L = new Float64Array(256);
+  for (let g = 0; g < 256; g++){
+    let v;
+    if (g <= P[0][0]) v = P[0][1]*(P[0][0] > 0 ? g/P[0][0] : 1);
+    else if (g >= P[P.length - 1][0]) v = top;
+    else { let j = 1; while (P[j][0] < g) j++; const [x0, y0] = P[j - 1], [x1, y1] = P[j]; v = x1 > x0 ? y0 + (y1 - y0)*(g - x0)/(x1 - x0) : y1; }
+    L[g] = v/top;
+  }
+  for (let g = 1; g < 256; g++) if (L[g] < L[g - 1]) L[g] = L[g - 1];
+  let knee = 255; while (knee > 0 && L[knee - 1] >= 0.999) knee--;
+  const inv = f => { if (f >= L[255]) return knee; for (let g = 0; g < 256; g++) if (L[g] >= f) return (g > 0 && f - L[g - 1] < L[g] - f) ? g - 1 : g; return 255; };
+  return {L, inv, knee};
+}
+function parseMap(){
+  const rows = $('corrMap').value.trim().split(/\n+/).map(l => l.split(/[\s,;]+/).filter(x => x !== '').map(Number))
+    .filter(r => r.length && r.every(isFinite));
+  const C = Math.min(...rows.map(r => r.length));
+  return rows.length >= 1 && C >= 1 ? rows.map(r => r.slice(0, C)) : null;
+}
+function corrField(){
+  const key = corrKey(); if (corrVals && key === corrKeyCache) return corrVals;
+  const M = parseMap(); if (!M){ $('corrInfo').innerHTML = '<span class="bad">Map not readable</span>'; return null; }
+  const Rn = M.length, Cn = M[0].length, all = M.flat(), mean = all.reduce((a, b) => a + b, 0)/all.length;
+  const tgt = Math.max(1, +$('corrTarget').value || 86), gam = Math.max(0.5, +$('corrGamma').value || 2.2),
+        gmax = Math.max(1, Math.min(255, Math.round(+$('corrMax').value || 255)));
+  const lut = $('lutOn').checked ? parseLut() : null;
+  if ($('lutOn').checked && !lut){ $('corrInfo').innerHTML = '<span class="bad">Measured curve not readable (use level:power pairs, e.g. 150:61.7)</span>'; return null; }
+  const topRel = lut ? lut.L[gmax] : Math.pow(gmax/255, gam);
+  const out = new Uint8Array(W*H); let mn = 255, mx = 0, sum = 0;
+  const memo = new Map();
+  const cx = x => Math.min(Cn - 1, Math.max(0, (x + 0.5)*Cn/W - 0.5)), cy = y => Math.min(Rn - 1, Math.max(0, (y + 0.5)*Rn/H - 0.5));
+  for (let y = 0; y < H; y++){
+    const fy = cy(y), y0 = Math.floor(fy), y1 = Math.min(Rn - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < W; x++){
+      const fx = cx(x), x0 = Math.floor(fx), x1 = Math.min(Cn - 1, x0 + 1), tx = fx - x0;
+      const v = (M[y0][x0]*(1 - tx) + M[y0][x1]*tx)*(1 - ty) + (M[y1][x0]*(1 - tx) + M[y1][x1]*tx)*ty;
+      const rel = 100*v/mean, c = Math.min(1, tgt/rel);
+      let g;
+      if (lut){ const q = Math.round(c*1000); g = memo.get(q); if (g === undefined){ g = Math.min(gmax, lut.inv(c*topRel)); memo.set(q, g); } }
+      else g = Math.round(gmax*Math.pow(c, 1/gam));
+      out[y*W + x] = g; if (g < mn) mn = g; if (g > mx) mx = g; sum += g;
+    }
+  }
+  corrVals = out; corrKeyCache = key;
+  const keep = tgt/Math.max(...all.map(v => 100*v/mean));
+  $('corrInfo').innerHTML = 'Map ' + Cn + ' × ' + Rn + ' read. Grey levels from ' + mn + ' to ' + mx + ' (mean ' + (sum/(W*H)).toFixed(0) + '). ' +
+    (lut ? 'Measured curve: flat above grey ' + lut.knee + ' (no extra light above it). ' : 'Using gamma ' + gam + '. ') +
+    'Expected light: ' + (100*topRel*keep).toFixed(0) + ' % of full white in the brightest spot, ' + (100*topRel).toFixed(0) +
+    ' % at or below the target. Scale the dose time by about ' + (100/(tgt*topRel)).toFixed(2) + ' for the mean area.';
+  return out;
+}
+function corrOn(){ return $('corrOn').checked; }
+function bitmaps(k, fill){
+  const pl = Math.max(1, Math.min(255, Math.round(+$('probeLevel').value || 255)));
+  const f = INFO[k].fill ? fill : 0, key = k + '@' + f + (k === 'q' ? JSON.stringify(probeCfg()) + 'L' + pl + usableKey() : '') + (k === 'r' ? $('rampLevels').value + 'S' + $('rampSize').value : '') +
+            (corrOn() && k !== 'r' ? '|C' + corrKey() : '') + (NOCLIP.has(k) ? '' : usableKey());
+  if (!cache.has(key)){
+    const R = area(fill), cv = corrOn() ? corrField() : null;
+    const makers = k === 'd' ? [1,2,3,4,5,6,7,8].map(s => () => doseStep(R, s))
+                 : k === 'q' ? probePlan().map(p => () => probeBitmap(p))
+                 : k === 'r' ? rampPlan().map(p => () => rampBitmap(p)) : [() => GEN[k](R)];
+    const U = usable();
+    const post = b => {
+      if (U.on && !NOCLIP.has(k)) for (let y = 0; y < H; y++){
+        const r = y*W; if (y < U.y0 || y >= U.y1) b.fill(0, r, r + W); else { b.fill(0, r, r + U.x0); b.fill(0, r + U.x1, r + W); }
+      }
+      if (k === 'q' && pl < 255) for (let i = 0; i < b.length; i++) if (b[i]) b[i] = pl;
+      if (cv && k !== 'r') for (let i = 0; i < b.length; i++) if (b[i]) b[i] = Math.round(b[i]*cv[i]/255);
+      return b;
+    };
+    const memo = k !== 'q' && k !== 'r';            // the probe can have hundreds of steps: build each one when it is shown
+    cache.set(key, makers.map(m => ({
+      _b: null, _i: null,
+      get bmp(){ if (this._b) return this._b; const b = post(m()); if (memo) this._b = b; return b; },
+      get img(){ if (this._i) return this._i; const im = toImageData(this.bmp); if (memo) this._i = im; return im; }
+    })));
+  }
+  return cache.get(key);
+}
+
+// =============================================================== UI
+const $ = id => document.getElementById(id), menu = $('menu');
+const ptab = $('ptab');
+for (const [k, t, name, fill] of PAT){
+  const tr = document.createElement('tr'); tr.dataset.k = k;
+  tr.innerHTML = '<td><kbd>' + k.toUpperCase() + '</kbd></td><td>' + (k === 'd' ? '<b>' + name + '</b>' : name) +
+    '</td><td class="dim">' + (fill ? (k === '7' ? 'centre' : 'fill') : (k === 'g' ? 'centre, small' : (k === 'j' || k === 'k') ? 'split' : k === 'w' ? 'usable area' : 'full field')) +
+    '</td><td><button data-png="' + k + '">PNG</button></td>';
+  ptab.appendChild(tr);
+}
+
+let mode = 'menu';          // menu | armed | typing | delay | exposing | preview
+let sel = null, abortFlag = false, textOn = true, typed = '', typeWhat = 't', status = '', logLines = [];
+
+function fillVal(){ return Math.min(100, Math.max(70, Math.round(+$('fill').value || 80))); }
+function setFill(v){ $('fill').value = Math.min(100, Math.max(70, Math.round(v))); }
+function exact(){ return innerWidth === 1024 && innerHeight === 768 && (devicePixelRatio || 1) === 1; }
+function check(){
+  const w = innerWidth, h = innerHeight, d = devicePixelRatio || 1;
+  $('chk').innerHTML = 'Window: <b>' + w + ' × ' + h + '</b> &nbsp; devicePixelRatio: <b>' + d + '</b><br>' +
+    (exact() ? '<span class="ok">1:1 confirmed — one image pixel = one DMD pixel.</span>'
+             : '<span class="bad">NOT 1:1.</span> Needs 1024 × 768 at DPR 1. Set display scaling to 100 %, ' +
+               'browser zoom to 100 % (Ctrl+0) and go fullscreen (F) on the projector output.');
+}
+check(); addEventListener('resize', check);
+
+function glyphs(x, y, s, sc){
+  cx.fillStyle = '#fff';
+  for (const ch of s.toUpperCase()){
+    const g = (FONT[ch] || FONT[' ']).split(' ');
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++)
+      if (g[r][c] === '1') cx.fillRect(x + c*sc, y + r*sc, sc, sc);
+    x += 6*sc;
+  }
+}
+function black(){ cx.fillStyle = '#000'; cx.fillRect(0, 0, W, H); }
+const fmt = t => (Math.round(t*10)/10).toFixed(1);
+function baseT(){ return Math.max(0, +$('tBase').value || 0); }
+function curT(){ return sel === 'd' ? +$('tDose').value : (sel === 'q' || sel === 'r') ? +$('tProbe').value : +$('tExp').value; }
+function setT(v){ v = Math.max(0.1, Math.round(v*10)/10); if (sel === 'd') $('tDose').value = v; else if (sel === 'q' || sel === 'r') $('tProbe').value = v; else $('tExp').value = v; }
+function gapT(){ return Math.max(0, +$('tGap').value || 0); }
+function lines(){
+  const L = [], inf = INFO[sel];
+  L.push((corrOn() ? 'CORR ' : '') + inf.title + (inf.fill && sel !== '7' ? '   FILL ' + fillVal() + ' %' : (sel === '7' || sel === 'g' || sel === 'j' || sel === 'k' ? '' : '   FULL FIELD')));
+  if (mode === 'typing') L.push((typeWhat === 't' ? 'TYPE TIME S: ' : typeWhat === 'm' ? 'TYPE BASE TIME S: ' : 'TYPE FILL %: ') + typed + '_  ENTER=SET ESC=CANCEL');
+  else if (sel === 'r') L.push(rampPlan().length + ' GREY LEVELS  ON ' + fmt(curT()) + ' S, DARK ' + fmt(gapT()) + ' S  (PROBE TIMES)');
+  else if (sel === 'q'){ const c = probeCfg(), n = c.C*c.Rw, tot = (n*(curT() + gapT()) + (c.ref > 0 ? 2*(c.ref + gapT()) : 0))/60;
+    L.push(c.C + 'X' + c.Rw + (c.tile ? ' TILES ' + Math.round(W/c.C) + 'X' + Math.round(H/c.Rw) + ' PX' : ' SQUARES ' + c.S + ' PX') + '  ON ' + fmt(curT()) + ' S, DARK ' + fmt(gapT()) + ' S, WHITE REF ' + fmt(c.ref) + ' S  ~' + tot.toFixed(1) + ' MIN'); }
+  else if (sel === 'd') L.push('BASE ' + fmt(baseT()) + ' S + STEP ' + fmt(curT()) + ' S: CELL N GETS ' + fmt(baseT()) + ' + N X ' + fmt(curT()) + ' S');
+  else L.push('T = ' + fmt(curT()) + ' S   SPACE=EXPOSE  ESC=MENU');
+  if (status) L.push(status);
+  if (!exact()) L.push('WARNING: WINDOW NOT 1024X768 AT DPR 1');
+  return L;
+}
+function idle(){
+  black();
+  const c = $('corner').value;
+  if (!textOn || c === 'off') return;
+  const L = lines(), sc = 2, lh = 16, m = 8;
+  const y0 = c[0] === 't' ? m : H - m - (L.length*lh - (lh - 7*sc));
+  L.forEach((s, i) => glyphs(c[1] === 'l' ? m : W - m - (s.length*6*sc - sc), y0 + i*lh, s, sc));
+}
+function showCanvas(){ cv.style.display = 'block'; menu.style.display = 'none'; document.body.classList.add('armed'); }
+function arm(k){
+  if (mode === 'delay' || mode === 'exposing') return;
+  sel = k; status = ''; mode = 'armed'; bitmaps(k, fillVal()); showCanvas(); idle();
+}
+function toMenu(){ mode = 'menu'; cv.style.display = 'none'; menu.style.display = 'block'; document.body.classList.remove('armed'); check(); }
+
+let actx = null;
+function beep(f, ms){
+  if (!$('beep').checked) return;
+  try{
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = f; g.gain.value = 0.08; o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + ms/1000);
+  }catch(e){}
+}
+
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+async function waitMs(ms, onTick){
+  const t0 = await nextFrame(); let t = t0, last = -1;
+  while (t - t0 < ms){
+    if (abortFlag) return false;
+    const left = Math.ceil((ms - (t - t0))/1000);
+    if (onTick && left !== last){ last = left; onTick(left); }
+    t = await nextFrame();
+  }
+  return !abortFlag;
+}
+async function showFor(img, T){
+  await nextFrame(); cx.putImageData(img, 0, 0);
+  const t0 = await nextFrame(); let t = t0;
+  while (t - t0 < T*1000 - 8){
+    if (abortFlag){ black(); return (performance.now() - t0)/1000; }
+    t = await nextFrame();
+  }
+  black();
+  return (t - t0)/1000;
+}
+async function expose(){
+  if (mode !== 'armed') return;
+  abortFlag = false; status = '';
+  const T = curT(), delay = Math.max(0, +$('tDelay').value || 0), fill = fillVal();
+  const seq = bitmaps(sel, fill), B = sel === 'd' ? baseT() : 0;
+  mode = 'delay';
+  const ok = await waitMs(delay*1000, left => { status = 'EXPOSING IN ' + left + ' S  ESC=ABORT'; idle(); });
+  if (!ok) return finish('ABORTED BEFORE START', 0, T, true, null, fill);
+  black(); mode = 'exposing'; beep(880, 120);
+  let total = 0; const steps = [];
+  const plan = sel === 'q' ? probePlan() : sel === 'r' ? rampPlan() : null, tSeq0 = performance.now(), wall0 = Date.now(), times = [];
+  for (let i = 0; i < seq.length; i++){
+    const dur = plan ? ((plan[i].kind === 'square' || plan[i].kind === 'grey' || plan[i].kind === 'ref') ? T : probeCfg().ref) : T + (i === 0 ? B : 0);
+    const tOn = (performance.now() - tSeq0)/1000;
+    const m = await showFor(seq[i].img, dur); total += m; steps.push(m);
+    if (plan) times.push([tOn, (performance.now() - tSeq0)/1000]);
+    if (abortFlag) break;
+    if (i < seq.length - 1){
+      black(); const gap = plan ? gapT()*1000 : 400, t1 = performance.now();
+      while (performance.now() - t1 < gap){ if (abortFlag) break; await nextFrame(); }
+      if (abortFlag) break;
+      if (plan){ const nx = plan[i + 1], ref = /^white/.test(nx.kind); beep(ref ? 440 : nx.kind === 'ref' ? 520 : nx.col === 1 ? 990 : 740, ref ? 300 : 70); }  // higher beep = new row
+    }
+  }
+  if (plan){
+    lastProbeRun = {date: new Date().toISOString(), wall0, cfg: Object.assign(probeCfg(), {ramp: sel === 'r'}), T, gap: gapT(),
+      rows: plan.slice(0, times.length).map((p, i) => Object.assign({}, p, {t_on: times[i][0], t_off: times[i][1]}))};
+  }
+  beep(abortFlag ? 300 : 660, abortFlag ? 400 : 250);
+  if (abortFlag) return finish('ABORTED AFTER ' + total.toFixed(2) + ' S', total, T, true, null, fill);
+  finish(sel === 'r' ? 'DONE GREY RAMP  CSV IN THE MENU' : sel === 'q' ? 'DONE PROBE ' + probeCfg().C + 'X' + probeCfg().Rw + '  CSV IN THE MENU'
+       : sel === 'd' ? 'DONE BASE ' + fmt(B) + ' S + 8 X ' + fmt(T) + ' S  (TOTAL ' + total.toFixed(1) + ' S)'
+                     : 'DONE ' + fmt(T) + ' S  (MEASURED ' + total.toFixed(2) + ' S)', total, T, false, steps, fill);
+}
+const FIELD_CM2 = (1024*2.2e-4)*(768*2.2e-4);        // full field at 2.2 um/px
+function litCm2(){ const U = usable(); return $('pwArea').value === 'usable' && U.on ? ((U.x1 - U.x0)*2.2e-4)*((U.y1 - U.y0)*2.2e-4) : FIELD_CM2; }
+function doseTxt(t){ const p = parseFloat($('pw').value); return p > 0 ? '   ' + (p/litCm2()*t).toFixed(1) + ' mJ/cm2' : ''; }
+function finish(msg, total, T, aborted, steps, fill){
+  mode = 'armed'; abortFlag = false; status = msg; idle();
+  const now = new Date().toTimeString().slice(0, 8), inf = INFO[sel];
+  logLines.push(now + '  ' + inf.title.padEnd(21) + (inf.fill && sel !== '7' ? ('fill ' + fill + '%').padEnd(10) : ''.padEnd(10)) +
+    (sel === 'd' ? 'base ' + fmt(baseT()) + ' s + step ' : 'set  ') + fmt(T) + ' s   ' + (aborted ? 'ABORTED after ' : 'measured ') + total.toFixed(2) + ' s' +
+    (steps && sel === 'd' ? '   steps ' + steps.map(s => s.toFixed(2)).join(' ') : '') +
+    (sel === 'q' ? '   grid ' + probeCfg().C + 'x' + probeCfg().Rw + (probeCfg().tile ? ' tiles' : ', square ' + probeCfg().S + ' px') + ', white ref ' + fmt(probeCfg().ref) + ' s' : '') +
+    (sel === 'q' ? '' : sel === 'd' ? '   cell 1 = ' + fmt(baseT() + T) + ' s, cell 8 = ' + fmt(baseT() + 8*T) + ' s' +
+       (parseFloat($('pw').value) > 0 ? ' (' + doseTxt(baseT() + T).trim() + ' .. ' + doseTxt(baseT() + 8*T).trim() + ')' : '') : doseTxt(total)));
+  $('log').textContent = logLines.join('\n');
+}
+// ------------------------------------------------ focus mode: pattern on until O / Esc
+let focusStop = false;
+async function focusMode(){
+  if (mode !== 'armed') return;
+  mode = 'focus'; focusStop = false; status = '';
+  const img = bitmaps(sel, fillVal())[0].img;
+  await nextFrame(); cx.putImageData(img, 0, 0);
+  const t0 = await nextFrame(); let t = t0, ticks = 0;
+  while (!focusStop){
+    t = await nextFrame();
+    const n = Math.floor((t - t0)/10000);
+    if (n > ticks){ ticks = n; beep(520, 60); }
+  }
+  black();
+  const dt = (t - t0)/1000, now = new Date().toTimeString().slice(0, 8);
+  mode = 'armed'; status = 'FOCUS VIEW ' + dt.toFixed(1) + ' S' + doseTxt(dt).toUpperCase(); idle();
+  logLines.push(now + '  ' + INFO[sel].title.padEnd(21) + ''.padEnd(10) + 'FOCUS VIEW ' + dt.toFixed(1) + ' s' + doseTxt(dt));
+  $('log').textContent = logLines.join('\n');
+}
+
+function download(k){
+  const fill = fillVal(), list = bitmaps(k, fill), c = document.createElement('canvas');
+  c.width = W; c.height = H; const g = c.getContext('2d');
+  list.forEach((o, i) => {
+    g.putImageData(o.img, 0, 0);
+    const a = document.createElement('a');
+    const base = k === 'd' ? 'dose_ladder_step_' + (i+1) : INFO[k].title.toLowerCase().replace(/ /g, '_');
+    a.download = base + (INFO[k].fill && k !== '7' ? '_fill' + fill : '') + '.png';
+    a.href = c.toDataURL('image/png'); setTimeout(() => a.click(), i*250);
+  });
+}
+
+addEventListener('keydown', e => {
+  const k = e.key, kl = k.toLowerCase();
+  const ae = document.activeElement || {};
+  const inField = ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA' ||
+                  (ae.tagName === 'INPUT' && !/^(file|checkbox|button|radio)$/i.test(ae.type || ''));
+  if (kl === 'f' && mode !== 'typing' && !(mode === 'menu' && inField)){
+    if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
+    return;
+  }
+  if (mode === 'delay' || mode === 'exposing'){ if (k === 'Escape') abortFlag = true; e.preventDefault(); return; }
+  if (mode === 'menu'){
+    if (inField){ if (k === 'Escape' || k === 'Enter') document.activeElement.blur(); return; }
+    if (INFO[kl]) arm(kl);
+    return;
+  }
+  if (mode === 'preview'){ e.preventDefault(); return; }
+  if (mode === 'focus'){ e.preventDefault(); if (k === 'Escape' || kl === 'o') focusStop = true; return; }
+  if (mode === 'typing'){
+    e.preventDefault();
+    if (/^[0-9.]$/.test(k)) typed += k;
+    else if (k === 'Backspace') typed = typed.slice(0, -1);
+    else if (k === 'Enter'){
+      const v = parseFloat(typed);
+      if (v >= 0 && typeWhat === 'm'){ $('tBase').value = Math.round(v*10)/10; }
+      else if (v > 0){ if (typeWhat === 't') setT(v); else { setFill(v); status = v < 70 || v > 100 ? 'FILL LIMITED TO 70-100 %' : ''; } }
+      mode = 'armed';
+    }
+    else if (k === 'Escape') mode = 'armed';
+    idle(); return;
+  }
+  // armed
+  e.preventDefault();
+  if (k === ' ') return expose();
+  if (k === 'Escape') return toMenu();
+  if (kl === 'o') return focusMode();
+  if (kl === 'v' && !e.repeat){ mode = 'preview'; cx.putImageData(bitmaps(sel, fillVal())[0].img, 0, 0); return; }
+  if (k === 'ArrowUp') setT(curT() + 1);
+  else if (k === 'ArrowDown') setT(curT() - 1);
+  else if (k === 'ArrowRight') setT(curT() + 0.1);
+  else if (k === 'ArrowLeft') setT(curT() - 0.1);
+  else if (k === 'PageUp') setT(curT() + 10);
+  else if (k === 'PageDown') setT(curT() - 10);
+  else if (k === '+' || k === '=') setFill(fillVal() + 5);
+  else if (k === '-' || k === '_') setFill(fillVal() - 5);
+  else if (kl === 't'){ typed = ''; typeWhat = 't'; mode = 'typing'; }
+  else if (kl === 'p'){ typed = ''; typeWhat = 'p'; mode = 'typing'; }
+  else if (kl === 'm'){ typed = ''; typeWhat = 'm'; mode = 'typing'; }
+  else if (kl === 'h') textOn = !textOn;
+  else if (kl === 'x'){ $('corrOn').checked = !$('corrOn').checked; if (corrOn()) corrField(); status = corrOn() ? 'GREYSCALE CORRECTION ON' : 'GREYSCALE CORRECTION OFF'; }
+  else if (kl === 's') $('beep').checked = !$('beep').checked;
+  else if (INFO[kl]){ sel = kl; status = ''; }
+  idle();
+});
+addEventListener('keyup', e => { if (mode === 'preview' && e.key.toLowerCase() === 'v'){ mode = 'armed'; idle(); } });
+function localStamp(ms){
+  const d = new Date(ms), p = (n, k) => String(n).padStart(k || 2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' +
+         p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+}
+['corrMap', 'corrTarget', 'corrGamma', 'corrMax', 'corrOn', 'lutOn', 'lutText'].forEach(id => $(id).addEventListener('change', () => { corrVals = null; corrField(); }));
+$('probeCsv').onclick = () => {
+  if (!lastProbeRun){ alert('No probe run yet: arm Q and press Space first.'); return; }
+  const r = lastProbeRun, lines = [(r.cfg.ramp ? '# GREY RAMP run, centre square ' + $('rampSize').value + ' px. ' : '') + '# probe run ' + r.date + ', on ' + r.T + ' s, dark ' + r.gap + ' s, grid ' + r.cfg.C + 'x' + r.cfg.Rw +
+    (r.cfg.tile ? ', tiles covering the full screen' : ', square ' + r.cfg.S + ' px') + '. Times in s from the first frame of the sequence (start beep). x,y = square centre in DMD px, y down from DMD top.',
+    '# sequence start (PC clock): ' + localStamp(r.wall0) + ' local, epoch ' + r.wall0 + ' ms',
+    'step,kind,row,col,x_px,y_px,size_px,grey_level,t_on_s,t_off_s,on_local,off_local'];
+  r.rows.forEach((p, i) => lines.push([i + 1, p.kind, p.row, p.col, p.x, p.y, p.size, p.level ?? ((p.kind === 'square' || p.kind === 'ref') ? $('probeLevel').value : 255), p.t_on.toFixed(3), p.t_off.toFixed(3),
+    localStamp(r.wall0 + 1000*p.t_on), localStamp(r.wall0 + 1000*p.t_off)].join(',')));
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
+  a.download = 'probe_run_' + r.date.replace(/[:.]/g, '-') + '.csv'; a.click();
+};
+// ------------------------------------------------ custom image: threshold at 128, 1:1, centred
+$('customFile').addEventListener('change', async ev => {
+  const f = ev.target.files && ev.target.files[0]; ev.target.blur(); if (!f) return;
+  try{
+    const bmpImg = await createImageBitmap(f);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d', {willReadFrequently: true}); g.imageSmoothingEnabled = false;
+    g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+    const U0 = usable(), fits = bmpImg.width <= U0.x1 - U0.x0 && bmpImg.height <= U0.y1 - U0.y0 && !(bmpImg.width === W && bmpImg.height === H);
+    const ox = fits ? U0.x0 + Math.floor((U0.x1 - U0.x0 - bmpImg.width)/2) : Math.floor((W - bmpImg.width)/2),
+          oy = fits ? U0.y0 + Math.floor((U0.y1 - U0.y0 - bmpImg.height)/2) : Math.floor((H - bmpImg.height)/2);
+    g.drawImage(bmpImg, ox, oy);
+    const d = g.getImageData(0, 0, W, H).data, out = new Uint8Array(W*H);
+    let on = 0;
+    for (let i = 0, j = 0; i < out.length; i++, j += 4){
+      const y = 0.299*d[j] + 0.587*d[j+1] + 0.114*d[j+2];
+      if (y >= 128){ out[i] = 255; on++; }
+    }
+    GEN['u'] = () => out.slice();
+    INFO['u'] = {title: 'CUSTOM IMAGE', name: f.name, fill: false};
+    for (const key of [...cache.keys()]) if (key.startsWith('u@')) cache.delete(key);
+    const exactSize = bmpImg.width === W && bmpImg.height === H;
+    $('customInfo').innerHTML = f.name + ' — ' + bmpImg.width + ' × ' + bmpImg.height +
+      (exactSize ? ' <span class="ok">1:1</span>' : fits ? ' <span class="ok">1:1, centred in the usable area at x ' + ox + ', y ' + oy + '</span>'
+                 : ' <span class="warn">larger than the usable area: centred on the screen, cropped or padded</span>') +
+      ' — ' + (100*on/out.length).toFixed(1) + ' % of pixels ON. Press U to arm.';
+    if (!ptab.querySelector('tr[data-k="u"]')){
+      const tr = document.createElement('tr'); tr.dataset.k = 'u';
+      tr.innerHTML = '<td><kbd>U</kbd></td><td>Custom image</td><td class="dim">as loaded</td><td><button data-png="u">PNG</button></td>';
+      ptab.appendChild(tr);
+    }
+    ptab.querySelector('tr[data-k="u"] td:nth-child(2)').textContent = 'Custom image: ' + f.name;
+  }catch(e){ $('customInfo').innerHTML = '<span class="bad">Could not read image: ' + e.message + '</span>'; }
+});
+ptab.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-png]');
+  if (btn){ download(btn.dataset.png); return; }
+  const tr = e.target.closest('tr[data-k]'); if (tr) arm(tr.dataset.k);
+});
+$('fill').addEventListener('change', () => setFill(fillVal()));
+function useInfo(){
+  const u = usable(), w = u.x1 - u.x0, h = u.y1 - u.y0;
+  $('useInfo').innerHTML = u.on ? 'Usable area ' + w + ' × ' + h + ' px (' + (w*2.2/1000).toFixed(2) + ' × ' + (h*2.2/1000).toFixed(2) +
+    ' mm at 2.2 um/px), x ' + u.x0 + '–' + u.x1 + ', y ' + u.y0 + '–' + u.y1 + '. Fill % and custom images are centred in it. Make custom masks ' + w + ' × ' + h + ' px (or full 1024 × 768).'
+    : 'Whole DMD in use (1024 × 768).';
+}
+['useOn', 'useX0', 'useX1', 'useY0', 'useY1'].forEach(id => $(id).addEventListener('change', useInfo)); useInfo();
+$('copy').addEventListener('click', () => { navigator.clipboard && navigator.clipboard.writeText(logLines.join('\n')); });
+addEventListener('resize', () => { if (mode === 'armed') idle(); });
+</script></body></html>

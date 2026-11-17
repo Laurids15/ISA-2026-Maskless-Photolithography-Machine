@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Mask designer</title>
+<style>
+  :root{--bg:#0b0b0d;--panel:#131317;--line:#2a2a30;--txt:#ddd;--dim:#888;--acc:#6ee7a8;--sel:#ffd166;--warn:#ffcf6b;--bad:#ff8a6b}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+  #app{display:grid;grid-template-columns:150px 1fr 330px;grid-template-rows:auto auto 1fr auto;height:100vh}
+  #top{grid-column:1/4;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+  #top h1{font-size:14px;margin:0 10px 0 0;letter-spacing:.06em;color:#fff}
+  #tools{grid-row:2/4;border-right:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:5px;background:var(--panel);overflow:auto}
+  #opts{grid-column:2;display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:6px 12px;border-bottom:1px solid var(--line);min-height:28px}
+  #wrap{grid-column:2;position:relative;overflow:hidden;background:#1a1a1f}
+  #view{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #side{grid-column:3;grid-row:2/4;border-left:1px solid var(--line);padding:10px 12px;overflow:auto;background:var(--panel)}
+  #status{grid-column:1/4;display:flex;gap:22px;padding:4px 12px;border-top:1px solid var(--line);background:var(--panel);color:var(--dim);white-space:nowrap;overflow:hidden}
+  h2{font-size:11px;letter-spacing:.12em;color:var(--dim);font-weight:400;margin:14px 0 6px}
+  h2:first-child{margin-top:0}
+  button{background:#1d1d22;border:1px solid #44444c;color:#ccc;padding:3px 9px;font:12px ui-monospace,monospace;cursor:pointer;border-radius:2px}
+  button:hover{color:#fff;border-color:#888}
+  button.on{border-color:var(--acc);color:#fff;background:#173126}
+  #tools button{text-align:left;padding:5px 8px}
+  #tools kbd{float:right;color:#777}
+  input,select,textarea{background:#1d1d22;border:1px solid #33333c;color:#fff;padding:2px 6px;font:12px ui-monospace,monospace}
+  input[type=number]{width:78px}
+  textarea{width:100%;box-sizing:border-box}
+  label{display:flex;gap:8px;align-items:center;margin:3px 0}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin:5px 0}
+  .dim{color:var(--dim)} .ok{color:var(--acc)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .px{color:#777;font-size:11px}
+  .sep{width:1px;height:20px;background:var(--line)}
+  #checks div{margin:2px 0}
+  #objlist{max-height:180px;overflow:auto;border:1px solid var(--line);margin-top:4px}
+  #objlist div{padding:1px 6px;cursor:pointer;white-space:nowrap}
+  #objlist div:hover{background:#1d1d22} #objlist div.s{background:#3a3220;color:#fff}
+  details summary{cursor:pointer;color:#aaa;margin-top:10px}
+  #toast{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:#173126;border:1px solid var(--acc);color:#fff;padding:5px 12px;display:none;pointer-events:none}
+</style></head><body>
+<div id="app">
+  <div id="top">
+    <h1>MASK DESIGNER</h1>
+    <button id="bNew">New</button>
+    <button id="bOpen">Open…</button>
+    <button id="bSave">Save design</button>
+    <span class="sep"></span>
+    <button id="bImport">Import image…</button>
+    <button id="bExport">Export PNG</button>
+    <button id="bSend" class="on">Send to exposure window</button>
+    <span class="sep"></span>
+    <label>Name <input id="dName" value="mask" style="width:150px"></label>
+    <label>Scale <select id="scaleSel">
+      <option value="2.2">5× — 2.2 µm/px</option><option value="4.4">2.5× — 4.4 µm/px</option><option value="custom">custom</option></select>
+      <input type="number" id="scale" value="2.2" step="0.01" min="0.1" style="width:64px"> µm/px</label>
+    <label><input type="checkbox" id="invert"> Export inverted</label>
+    <select id="examples"><option value="">Examples…</option><option value="fig1">Figure 1: electrodes, 5×</option><option value="marks">Alignment marks + label</option></select>
+    <input type="file" id="fOpen" accept=".json,application/json" hidden>
+    <input type="file" id="fImport" accept="image/*" hidden>
+  </div>
+
+  <div id="tools">
+    <h2>TOOLS</h2>
+    <button data-tool="select">Select / move <kbd>V</kbd></button>
+    <button data-tool="rect">Rectangle <kbd>R</kbd></button>
+    <button data-tool="circ">Circle <kbd>C</kbd></button>
+    <button data-tool="path">Line / path <kbd>L</kbd></button>
+    <button data-tool="poly">Polygon <kbd>P</kbd></button>
+    <button data-tool="text">Text <kbd>T</kbd></button>
+    <button data-tool="pan">Pan <kbd>H</kbd></button>
+    <h2>VIEW</h2>
+    <button id="bFit">Fit <kbd>0</kbd></button>
+    <button id="bZin">Zoom in <kbd>+</kbd></button>
+    <button id="bZout">Zoom out <kbd>−</kbd></button>
+    <label><input type="checkbox" id="showRaster" checked> Pixels</label>
+    <label><input type="checkbox" id="showOutl" checked> Outlines</label>
+    <label><input type="checkbox" id="showGrid" checked> Pixel grid</label>
+    <label><input type="checkbox" id="dGrid"> Design grid</label>
+    <label style="padding-left:22px">every <input type="number" id="gridUm" value="50" min="0.1" step="any" style="width:52px"> µm</label>
+    <label><input type="checkbox" id="gridSnap"> Snap to grid</label>
+    <div class="px" id="gridInfo" style="padding-left:2px"></div>
+    <h2>EDIT</h2>
+    <button id="bUndo">Undo <kbd>^Z</kbd></button>
+    <button id="bRedo">Redo <kbd>^Y</kbd></button>
+    <button id="bDup">Duplicate <kbd>^D</kbd></button>
+    <button id="bDel">Delete <kbd>Del</kbd></button>
+    <button id="bAll">Select all <kbd>^A</kbd></button>
+  </div>
+
+  <div id="opts"></div>
+  <div id="wrap"><canvas id="view"></canvas><div id="toast"></div></div>
+
+  <div id="side">
+    <h2>SELECTION</h2>
+    <div id="props" class="dim">Nothing selected. Click an object, or drag a box around several.</div>
+    <h2>OBJECTS (top = drawn last)</h2>
+    <div id="objlist"></div>
+    <h2>CHECKS</h2>
+    <div id="checks"></div>
+    <h2>DMD AND USABLE AREA</h2>
+    <label>x <input type="number" id="useX0" value="0" step="8"> – <input type="number" id="useX1" value="896" step="8"> px</label>
+    <label>y <input type="number" id="useY0" value="0" step="8"> – <input type="number" id="useY1" value="768" step="8"> px</label>
+    <div class="dim" id="useInfo"></div>
+    <details><summary>Help</summary>
+      <p class="dim">Everything is drawn on the 1024 × 768 DMD pixel grid and exported 1:1 (white = lit mirror = exposed).
+      Coordinates are in µm from the centre of the usable area, y pointing down, and are always rounded to whole
+      pixels (lines of odd width sit on pixel centres so both edges fall on pixel borders).</p>
+      <p class="dim">Each object either <b>adds</b> light or <b>cuts</b> it away; objects lower in the list are drawn later.
+      Use cut objects for holes and gaps.</p>
+      <p class="dim">Rectangle / circle: drag. Line / polygon: click the points, double-click or Enter to finish,
+      Shift = 0/45/90°. Text: click, then type (5 × 7 pixel font, capitals and digits).
+      Select: click, Shift-click to add, drag a box; drag to move; drag the yellow handles to resize.
+      Arrows move by 1 px (Shift: 10 px). Wheel = zoom, middle button or Space-drag = pan.</p>
+      <p class="dim">Design grid (Shift+G): lines every N µm from the centre of the usable area (green; the centre lines are
+      brighter, every 5th line medium). When zoomed out the grid is thinned in steps of 5 (status bar shows the spacing).
+      Snap to grid puts new points, rectangle corners, circle centres, handle drags and moves on the grid; positions are
+      still rounded to whole pixels, so a grid that is not a whole number of pixels gives up to ½ px deviation.</p>
+      <p class="dim">The dose ladder of 4 Nov: dark gaps narrower than ~3 px close, lit features grow ~2–3 px per edge
+      next to big lit areas, isolated 2 px dots print at ~165 mJ/cm². The checks list flags features under 3 px.</p>
+      <p class="dim">“Send to exposure window” opens expose.html (same folder) the first time; drag that window to the
+      projector and press F there. Later sends go to the same window. The design is auto-saved in this browser.</p>
+    </details>
+  </div>
+
+  <div id="status"><span id="sCur">–</span><span id="sZoom"></span><span id="sInfo"></span></div>
+</div>
+
+<script>
+const FONT = {"0": "01110 10001 10011 10101 11001 10001 01110", "1": "00100 01100 00100 00100 00100 00100 01110", "2": "01110 10001 00001 00010 00100 01000 11111", "3": "11111 00010 00100 00010 00001 10001 01110", "4": "00010 00110 01010 10010 11111 00010 00010", "5": "11111 10000 11110 00001 00001 10001 01110", "6": "00110 01000 10000 11110 10001 10001 01110", "7": "11111 00001 00010 00100 01000 01000 01000", "8": "01110 10001 10001 01110 10001 10001 01110", "9": "01110 10001 10001 01111 00001 00010 01100", "A": "01110 10001 10001 11111 10001 10001 10001", "B": "11110 10001 10001 11110 10001 10001 11110", "C": "01110 10001 10000 10000 10000 10001 01110", "D": "11110 10001 10001 10001 10001 10001 11110", "E": "11111 10000 10000 11110 10000 10000 11111", "F": "11111 10000 10000 11110 10000 10000 10000", "G": "01110 10001 10000 10111 10001 10001 01111", "H": "10001 10001 10001 11111 10001 10001 10001", "I": "01110 00100 00100 00100 00100 00100 01110", "J": "00111 00010 00010 00010 00010 10010 01100", "K": "10001 10010 10100 11000 10100 10010 10001", "L": "10000 10000 10000 10000 10000 10000 11111", "M": "10001 11011 10101 10101 10001 10001 10001", "N": "10001 11001 10101 10011 10001 10001 10001", "O": "01110 10001 10001 10001 10001 10001 01110", "P": "11110 10001 10001 11110 10000 10000 10000", "Q": "01110 10001 10001 10001 10101 10010 01101", "R": "11110 10001 10001 11110 10100 10010 10001", "S": "01111 10000 10000 01110 00001 00001 11110", "T": "11111 00100 00100 00100 00100 00100 00100", "U": "10001 10001 10001 10001 10001 10001 01110", "V": "10001 10001 10001 10001 10001 01010 00100", "W": "10001 10001 10001 10101 10101 11011 01010", "X": "10001 10001 01010 00100 01010 10001 10001", "Y": "10001 10001 01010 00100 00100 00100 00100", "Z": "11111 00001 00010 00100 01000 10000 11111", " ": "00000 00000 00000 00000 00000 00000 00000", "-": "00000 00000 00000 11111 00000 00000 00000", ".": "00000 00000 00000 00000 00000 01100 01100", ":": "00000 01100 01100 00000 01100 01100 00000", "/": "00001 00010 00010 00100 01000 01000 10000", "=": "00000 00000 11111 00000 11111 00000 00000", "+": "00000 00100 00100 11111 00100 00100 00000", "(": "00010 00100 01000 01000 01000 00100 00010", ")": "01000 00100 00010 00010 00010 00100 01000", ",": "00000 00000 00000 00000 01100 00100 01000", "%": "11001 11010 00010 00100 01000 01011 10011", ">": "01000 00100 00010 00001 00010 00100 01000", "<": "00010 00100 01000 10000 01000 00100 00010", "!": "00100 00100 00100 00100 00100 00000 00100", "?": "01110 10001 00001 00010 00100 00000 00100", "#": "01010 01010 11111 01010 11111 01010 01010", "_": "00000 00000 00000 00000 00000 00000 11111", "'": "00100 00100 01000 00000 00000 00000 00000"};
+const W = 1024, H = 768;
+const $ = id => document.getElementById(id);
+const view = $('view'), vg = view.getContext('2d');
+
+// ================================================================ model
+let objs = [], sel = new Set(), nextId = 1;
+let undoStack = [], redoStack = [];
+const imgCache = new Map();               // id -> Uint8Array (0/1) for imported images
+const S = () => Math.max(0.01, +$('scale').value || 2.2);           // µm per DMD pixel
+function usable(){
+  const g = id => Math.round(+$(id).value);
+  const x0 = Math.max(0, Math.min(W - 16, g('useX0') || 0)), x1 = Math.max(x0 + 16, Math.min(W, g('useX1') || W));
+  const y0 = Math.max(0, Math.min(H - 16, g('useY0') || 0)), y1 = Math.max(y0 + 16, Math.min(H, g('useY1') || H));
+  return {x0, y0, x1, y1, cx: (x0 + x1)/2, cy: (y0 + y1)/2};
+}
+const toUm = (p, axis) => { const U = usable(); return (p - (axis === 'x' ? U.cx : U.cy))*S(); };
+const fromUm = (u, axis) => { const U = usable(); return u/S() + (axis === 'x' ? U.cx : U.cy); };
+const f2 = v => (Math.round(v*100)/100).toString();
+const umPx = px => f2(px*S()) + ' µm';
+// snap a coordinate so that a line of width w has its edges on pixel borders
+const snapC = (v, w) => (Math.round(w) % 2) ? Math.floor(v) + 0.5 : Math.round(v);
+
+function snapshot(){ return JSON.stringify({objs, nextId}); }
+function commit(){                         // call after every finished change
+  undoStack.push(lastSaved); if (undoStack.length > 200) undoStack.shift();
+  redoStack = []; lastSaved = snapshot(); dirty();
+}
+let lastSaved = snapshot();
+function restore(s){ const d = JSON.parse(s); objs = d.objs; nextId = d.nextId; sel = new Set([...sel].filter(id => objs.some(o => o.id === id))); lastSaved = s; dirty(); }
+function undo(){ if (!undoStack.length) return; redoStack.push(lastSaved); restore(undoStack.pop()); }
+function redo(){ if (!redoStack.length) return; undoStack.push(lastSaved); restore(redoStack.pop()); }
+function add(o){ o.id = nextId++; o.op = o.op || newOp(); objs.push(o); return o; }
+const byId = id => objs.find(o => o.id === id);
+
+// ================================================================ rasterizer (pixel centres)
+function fillRect(b, x, y, w, h, v){
+  const x0 = Math.max(0, Math.round(x)), y0 = Math.max(0, Math.round(y)), x1 = Math.min(W, Math.round(x + w)), y1 = Math.min(H, Math.round(y + h));
+  for (let yy = y0; yy < y1; yy++) b.fill(v, yy*W + x0, yy*W + Math.max(x0, x1));
+}
+function fillPoly(b, pts, v){
+  if (pts.length < 3) return;
+  let ymin = Infinity, ymax = -Infinity;
+  for (const p of pts){ ymin = Math.min(ymin, p[1]); ymax = Math.max(ymax, p[1]); }
+  const ya = Math.max(0, Math.ceil(ymin - 0.5)), yb = Math.min(H - 1, Math.floor(ymax - 0.5));
+  for (let y = ya; y <= yb; y++){
+    const yc = y + 0.5, xs = [];
+    for (let i = 0; i < pts.length; i++){
+      const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+      if ((y1 <= yc && y2 > yc) || (y2 <= yc && y1 > yc)) xs.push(x1 + (yc - y1)*(x2 - x1)/(y2 - y1));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2){
+      const xa = Math.max(0, Math.ceil(xs[k] - 0.5)), xb = Math.min(W, Math.ceil(xs[k + 1] - 0.5));
+      if (xb > xa) b.fill(v, y*W + xa, y*W + xb);
+    }
+  }
+}
+function fillDisc(b, cx, cy, d, v){
+  const r = d/2, r2 = r*r;
+  for (let y = Math.max(0, Math.floor(cy - r - 1)); y <= Math.min(H - 1, Math.ceil(cy + r + 1)); y++)
+    for (let x = Math.max(0, Math.floor(cx - r - 1)); x <= Math.min(W - 1, Math.ceil(cx + r + 1)); x++)
+      if ((x + 0.5 - cx)**2 + (y + 0.5 - cy)**2 <= r2 + 1e-9) b[y*W + x] = v;
+}
+function segQuad(a, c, w, ext0, ext1){
+  const dx = c[0] - a[0], dy = c[1] - a[1], L = Math.hypot(dx, dy) || 1, ux = dx/L, uy = dy/L, nx = -uy*w/2, ny = ux*w/2;
+  const A = [a[0] - ux*ext0, a[1] - uy*ext0], C = [c[0] + ux*ext1, c[1] + uy*ext1];
+  return [[A[0] + nx, A[1] + ny], [C[0] + nx, C[1] + ny], [C[0] - nx, C[1] - ny], [A[0] - nx, A[1] - ny]];
+}
+const axisAligned = (a, c) => Math.abs(a[0] - c[0]) < 1e-9 || Math.abs(a[1] - c[1]) < 1e-9;
+function drawPath(b, o, v){
+  const p = o.pts, w = o.w, n = p.length;
+  if (n === 1){ fillRect(b, p[0][0] - w/2, p[0][1] - w/2, w, w, v); return; }
+  const capE = o.cap === 'square' ? w/2 : 0;
+  for (let i = 0; i + 1 < n; i++) fillPoly(b, segQuad(p[i], p[i + 1], w, i === 0 ? capE : 0, i === n - 2 ? capE : 0), v);
+  for (let i = 1; i + 1 < n; i++){            // joins: square for 90° axis-aligned corners, round otherwise
+    if (axisAligned(p[i - 1], p[i]) && axisAligned(p[i], p[i + 1])) fillRect(b, p[i][0] - w/2, p[i][1] - w/2, w, w, v);
+    else fillDisc(b, p[i][0], p[i][1], w, v);
+  }
+}
+function drawText(b, o, v){
+  let x = o.x;
+  for (const ch of String(o.s).toUpperCase()){
+    const g = (FONT[ch] || FONT[' ']).split(' ');
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === '1') fillRect(b, x + c*o.sc, o.y + r*o.sc, o.sc, o.sc, v);
+    x += 6*o.sc;
+  }
+}
+function drawImg(b, o, v){
+  const m = imgCache.get(o.id); if (!m) return;
+  for (let y = 0; y < o.h; y++){ const yy = o.y + y; if (yy < 0 || yy >= H) continue;
+    for (let x = 0; x < o.w; x++){ const xx = o.x + x; if (xx < 0 || xx >= W) continue; if (m[y*o.w + x]) b[yy*W + xx] = v; } }
+}
+function drawObj(b, o, v){
+  if (o.t === 'rect') fillRect(b, o.x, o.y, o.w, o.h, v);
+  else if (o.t === 'circ') fillDisc(b, o.cx, o.cy, o.d, v);
+  else if (o.t === 'poly') fillPoly(b, o.pts, v);
+  else if (o.t === 'path') drawPath(b, o, v);
+  else if (o.t === 'text') drawText(b, o, v);
+  else if (o.t === 'img') drawImg(b, o, v);
+}
+let raster = new Uint8Array(W*H), rasterValid = false;
+function rasterize(){
+  const b = new Uint8Array(W*H);
+  for (const o of objs) drawObj(b, o, o.op === 'cut' ? 0 : 255);
+  raster = b; rasterValid = true; rasterCanvasValid = false;
+  return b;
+}
+function exportBitmap(){
+  if (!rasterValid) rasterize();
+  const b = raster.slice();
+  if ($('invert').checked) for (let i = 0; i < b.length; i++) b[i] = 255 - b[i];
+  return b;
+}
+function exportDataURL(){
+  const b = exportBitmap(), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), im = g.createImageData(W, H);
+  for (let i = 0, j = 0; i < b.length; i++, j += 4){ im.data[j] = im.data[j+1] = im.data[j+2] = b[i]; im.data[j+3] = 255; }
+  g.putImageData(im, 0, 0); return c.toDataURL('image/png');
+}
+
+// ================================================================ geometry helpers
+function bbox(o){
+  if (o.t === 'rect' || o.t === 'img') return [o.x, o.y, o.x + o.w, o.y + o.h];
+  if (o.t === 'circ') return [o.cx - o.d/2, o.cy - o.d/2, o.cx + o.d/2, o.cy + o.d/2];
+  if (o.t === 'text'){ const n = String(o.s).length; return [o.x, o.y, o.x + Math.max(1, n*6 - 1)*o.sc, o.y + 7*o.sc]; }
+  const xs = o.pts.map(p => p[0]), ys = o.pts.map(p => p[1]), e = o.t === 'path' ? o.w/2 : 0;
+  return [Math.min(...xs) - e, Math.min(...ys) - e, Math.max(...xs) + e, Math.max(...ys) + e];
+}
+function distSeg(p, a, c){
+  const dx = c[0] - a[0], dy = c[1] - a[1], L2 = dx*dx + dy*dy;
+  const t = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0])*dx + (p[1] - a[1])*dy)/L2)) : 0;
+  return Math.hypot(p[0] - a[0] - t*dx, p[1] - a[1] - t*dy);
+}
+function pip(p, pts){
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++){
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > p[1]) !== (yj > p[1]) && p[0] < (xj - xi)*(p[1] - yi)/(yj - yi) + xi) c = !c;
+  }
+  return c;
+}
+function hit(o, p, tol){
+  if (o.t === 'path'){ for (let i = 0; i + 1 < o.pts.length; i++) if (distSeg(p, o.pts[i], o.pts[i + 1]) <= o.w/2 + tol) return true;
+    return o.pts.length === 1 && Math.hypot(p[0] - o.pts[0][0], p[1] - o.pts[0][1]) <= o.w/2 + tol; }
+  if (o.t === 'poly') return pip(p, o.pts) || o.pts.some((a, i) => distSeg(p, a, o.pts[(i + 1) % o.pts.length]) <= tol);
+  if (o.t === 'circ') return Math.hypot(p[0] - o.cx, p[1] - o.cy) <= o.d/2 + tol;
+  const [x0, y0, x1, y1] = bbox(o); return p[0] >= x0 - tol && p[0] <= x1 + tol && p[1] >= y0 - tol && p[1] <= y1 + tol;
+}
+function moveObj(o, dx, dy){
+  if ('x' in o){ o.x += dx; o.y += dy; }
+  if (o.t === 'circ'){ o.cx += dx; o.cy += dy; }
+  if (o.pts) o.pts = o.pts.map(p => [p[0] + dx, p[1] + dy]);
+}
+function minFeature(o){
+  if (o.t === 'rect') return Math.min(o.w, o.h);
+  if (o.t === 'circ') return o.d;
+  if (o.t === 'path') return o.w;
+  if (o.t === 'text') return o.sc;
+  if (o.t === 'poly'){ const [x0, y0, x1, y1] = bbox(o); return Math.min(x1 - x0, y1 - y0); }
+  return Infinity;
+}
+const describe = o => o.t === 'rect' ? 'rect ' + o.w + '×' + o.h + ' px' : o.t === 'circ' ? 'circle ⌀' + o.d + ' px'
+  : o.t === 'path' ? 'line w ' + o.w + ' px, ' + o.pts.length + ' pts' : o.t === 'poly' ? 'polygon ' + o.pts.length + ' pts'
+  : o.t === 'text' ? 'text "' + o.s + '" ' + o.sc + ' px' : 'image ' + o.w + '×' + o.h;
+
+// ================================================================ view
+let z = 1, ox = 0, oy = 0;                 // screen = (px - ox)*z
+let rasterCanvas = document.createElement('canvas'); rasterCanvas.width = W; rasterCanvas.height = H;
+let rasterCanvasValid = false;
+function fit(){
+  const r = view.getBoundingClientRect(), m = 30;
+  z = Math.min((r.width - 2*m)/W, (r.height - 2*m)/H); ox = -(r.width/z - W)/2; oy = -(r.height/z - H)/2; draw();
+}
+const toScr = (x, y) => [(x - ox)*z, (y - oy)*z];
+const toPxF = (sx, sy) => [sx/z + ox, sy/z + oy];
+function buildRasterCanvas(){
+  if (!rasterValid) rasterize();
+  const g = rasterCanvas.getContext('2d'), im = g.createImageData(W, H), d = im.data, U = usable();
+  for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++){
+    const j = i*4, inU = x >= U.x0 && x < U.x1 && y >= U.y0 && y < U.y1, on = raster[i];
+    if (on){ d[j] = inU ? 120 : 255; d[j+1] = inU ? 220 : 120; d[j+2] = inU ? 255 : 100; }
+    else { d[j] = inU ? 0 : 34; d[j+1] = inU ? 0 : 10; d[j+2] = inU ? 0 : 10; }
+    d[j+3] = 255;
+  }
+  g.putImageData(im, 0, 0); rasterCanvasValid = true;
+}
+function niceStep(um){ const p = Math.pow(10, Math.floor(Math.log10(um))); for (const k of [1, 2, 5, 10]) if (k*p >= um) return k*p; return 10*p; }
+function draw(){
+  const r = view.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  if (view.width !== Math.round(r.width*dpr) || view.height !== Math.round(r.height*dpr)){ view.width = Math.round(r.width*dpr); view.height = Math.round(r.height*dpr); }
+  vg.setTransform(dpr, 0, 0, dpr, 0, 0);
+  vg.fillStyle = '#1a1a1f'; vg.fillRect(0, 0, r.width, r.height);
+  const [sx0, sy0] = toScr(0, 0);
+  if ($('showRaster').checked){
+    if (!rasterCanvasValid) buildRasterCanvas();
+    vg.imageSmoothingEnabled = false; vg.drawImage(rasterCanvas, sx0, sy0, W*z, H*z);
+  } else { vg.fillStyle = '#000'; vg.fillRect(sx0, sy0, W*z, H*z); }
+  vg.strokeStyle = '#555'; vg.lineWidth = 1; vg.strokeRect(sx0 - 0.5, sy0 - 0.5, W*z + 1, H*z + 1);
+  // pixel grid
+  if ($('showGrid').checked && z >= 6){
+    const [a0, b0] = toPxF(0, 0), [a1, b1] = toPxF(r.width, r.height);
+    vg.strokeStyle = 'rgba(255,255,255,0.09)'; vg.beginPath();
+    for (let x = Math.max(0, Math.floor(a0)); x <= Math.min(W, Math.ceil(a1)); x++){ const s = (x - ox)*z; vg.moveTo(s, Math.max(0, sy0)); vg.lineTo(s, Math.min(r.height, sy0 + H*z)); }
+    for (let y = Math.max(0, Math.floor(b0)); y <= Math.min(H, Math.ceil(b1)); y++){ const s = (y - oy)*z; vg.moveTo(Math.max(0, sx0), s); vg.lineTo(Math.min(r.width, sx0 + W*z), s); }
+    vg.stroke();
+  }
+  let gStep = 0; if ($('dGrid').checked) gStep = drawDesignGrid(r);
+  // usable area + centre
+  const U = usable(), [ux0, uy0] = toScr(U.x0, U.y0), [ccx, ccy] = toScr(U.cx, U.cy);
+  vg.setLineDash([6, 5]); vg.strokeStyle = '#ff8a6b'; vg.strokeRect(ux0, uy0, (U.x1 - U.x0)*z, (U.y1 - U.y0)*z); vg.setLineDash([]);
+  vg.strokeStyle = 'rgba(255,138,107,0.6)'; vg.beginPath(); vg.moveTo(ccx - 8, ccy); vg.lineTo(ccx + 8, ccy); vg.moveTo(ccx, ccy - 8); vg.lineTo(ccx, ccy + 8); vg.stroke();
+  // outlines
+  for (const o of objs){
+    const s = sel.has(o.id);
+    if (!s && !$('showOutl').checked) continue;
+    vg.strokeStyle = s ? '#ffd166' : (o.op === 'cut' ? '#ff6b9a' : '#3fb6ff'); vg.lineWidth = s ? 1.5 : 1;
+    outline(o); vg.stroke();
+  }
+  // handles
+  if (sel.size === 1){ const o = byId([...sel][0]); if (o) for (const h of handles(o)){ const [hx, hy] = toScr(h.x, h.y); vg.fillStyle = '#ffd166'; vg.fillRect(hx - 4, hy - 4, 8, 8); } }
+  // in-progress drawing
+  for (const pv of [drag && drag.kind !== 'build' && drag.preview, building && buildPreview]) if (pv){ vg.strokeStyle = '#6ee7a8'; vg.lineWidth = 1.5; vg.setLineDash([4, 3]); outline(pv); vg.stroke(); vg.setLineDash([]); }
+  if (drag && drag.kind === 'marquee'){ const [a, b] = toScr(drag.x0, drag.y0), [c, d] = toScr(drag.x1, drag.y1); vg.strokeStyle = '#ffd166'; vg.setLineDash([4, 3]); vg.strokeRect(a, b, c - a, d - b); vg.setLineDash([]); }
+  // scale bar
+  const um = niceStep(120/z*S()), len = um/S()*z;
+  vg.fillStyle = '#ddd'; vg.fillRect(16, r.height - 22, len, 3); vg.font = '12px ui-monospace,monospace';
+  vg.fillText((um >= 1000 ? um/1000 + ' mm' : um + ' µm') + '  (' + f2(um/S()) + ' px)', 16, r.height - 28);
+  $('sZoom').textContent = ($('dGrid').checked ? 'grid ' + f2(+$('gridUm').value*gStep) + ' µm' + (gStep > 1 ? ' (thinned)' : '') + (snapOn() ? ', snap on' : '') + ' · ' : '') + 'zoom ' + (z >= 1 ? f2(z) + ' screen px per DMD px' : '1 screen px = ' + f2(1/z) + ' DMD px');
+}
+function outline(o){
+  vg.beginPath();
+  if (o.t === 'circ'){ const [a, b] = toScr(o.cx, o.cy); vg.arc(a, b, o.d/2*z, 0, 2*Math.PI); return; }
+  if (o.t === 'path'){ o.pts.forEach((p, i) => { const [a, b] = toScr(p[0], p[1]); i ? vg.lineTo(a, b) : vg.moveTo(a, b); });
+    if (o.pts.length > 1) for (let i = 0; i + 1 < o.pts.length; i++){ const q = segQuad(o.pts[i], o.pts[i + 1], o.w, 0, 0); q.forEach((p, k) => { const [a, b] = toScr(p[0], p[1]); k ? vg.lineTo(a, b) : vg.moveTo(a, b); }); vg.closePath(); }
+    return; }
+  if (o.t === 'poly'){ o.pts.forEach((p, i) => { const [a, b] = toScr(p[0], p[1]); i ? vg.lineTo(a, b) : vg.moveTo(a, b); }); vg.closePath(); return; }
+  const [x0, y0, x1, y1] = bbox(o), [a, b] = toScr(x0, y0); vg.rect(a, b, (x1 - x0)*z, (y1 - y0)*z);
+}
+function handles(o){
+  if (o.t === 'rect') return [[0, 0], [1, 0], [1, 1], [0, 1]].map(([i, j]) => ({x: o.x + i*o.w, y: o.y + j*o.h, set(nx, ny){
+    nx = Math.round(nx); ny = Math.round(ny);
+    let x0 = i ? o.x : nx, x1 = i ? nx : o.x + o.w, y0 = j ? o.y : ny, y1 = j ? ny : o.y + o.h;
+    if (x1 < x0) [x0, x1] = [x1, x0]; if (y1 < y0) [y0, y1] = [y1, y0];
+    o.x = x0; o.y = y0; o.w = Math.max(1, x1 - x0); o.h = Math.max(1, y1 - y0); }}));
+  if (o.t === 'circ') return [{x: o.cx + o.d/2, y: o.cy, set(nx){ o.d = Math.max(1, Math.round(2*Math.abs(nx - o.cx))); o.cx = snapC(o.cx, o.d); o.cy = snapC(o.cy, o.d); }}];
+  if (o.t === 'path' || o.t === 'poly') return o.pts.map((p, k) => ({x: p[0], y: p[1], set(nx, ny){
+    o.pts[k] = o.t === 'path' ? [snapC(nx, o.w), snapC(ny, o.w)] : [Math.round(nx), Math.round(ny)]; }}));
+  return [];
+}
+
+// ================================================================ design grid (from the centre of the usable area)
+const gridPx = () => Math.max(1e-6, (+$('gridUm').value || 50)/S());
+const snapOn = () => $('gridSnap').checked;
+function snapPt(p){ if (!snapOn()) return p; const U = usable(), g = gridPx(); return [U.cx + Math.round((p[0] - U.cx)/g)*g, U.cy + Math.round((p[1] - U.cy)/g)*g]; }
+function snapD(d){ if (!snapOn()) return Math.round(d); const g = gridPx(); return Math.round(Math.round(d/g)*g); }
+function gridInfo(){
+  const g = gridPx();
+  $('gridInfo').textContent = '= ' + f2(g) + ' px' + (Math.abs(g - Math.round(g)) > 0.01 ? ' (not whole px: snapped points are rounded to the pixel)' : '');
+  ['dGrid', 'gridUm', 'gridSnap'].forEach(id => localStorage_set(id, $(id).type === 'checkbox' ? ($(id).checked ? '1' : '') : $(id).value));
+}
+function drawDesignGrid(r){
+  const g = gridPx(), U = usable();
+  let step = 1; while (g*step*z < 7) step *= 5;           // thin out when zoomed out
+  const G = g*step, [a0, b0] = toPxF(0, 0), [a1, b1] = toPxF(r.width, r.height);
+  const xA = Math.max(0, a0), xB = Math.min(W, a1), yA = Math.max(0, b0), yB = Math.min(H, b1);
+  const line = (k, axis) => {
+    const n = Math.round(k*step);                          // index of the line on the full grid
+    vg.strokeStyle = n === 0 ? 'rgba(110,231,168,0.8)' : n % 5 === 0 ? 'rgba(110,231,168,0.42)' : 'rgba(110,231,168,0.2)'; vg.beginPath();
+    if (axis === 'x'){ const sx = (U.cx + k*G - ox)*z; vg.moveTo(sx, (yA - oy)*z); vg.lineTo(sx, (yB - oy)*z); }
+    else { const sy = (U.cy + k*G - oy)*z; vg.moveTo((xA - ox)*z, sy); vg.lineTo((xB - ox)*z, sy); }
+    vg.stroke();
+  };
+  vg.lineWidth = 1;
+  for (let k = Math.ceil((xA - U.cx)/G); k <= Math.floor((xB - U.cx)/G); k++) line(k, 'x');
+  for (let k = Math.ceil((yA - U.cy)/G); k <= Math.floor((yB - U.cy)/G); k++) line(k, 'y');
+  return step;
+}
+
+// ================================================================ tools and mouse
+let tool = 'select', drag = null, building = null, spaceDown = false;
+const newOp = () => $('newOp') ? $('newOp').value : 'add';
+function setTool(t){
+  if (building) finishBuilding(false);
+  tool = t; document.querySelectorAll('#tools button[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  const ow = '<label>Line width <input type="number" id="optW" value="' + (localStorage_get('optW') || 20) + '" step="any" min="0"> µm <span class="px" id="optWpx"></span></label>' +
+             '<label>Ends <select id="optCap"><option value="flat">flat</option><option value="square">square (+w/2)</option></select></label>';
+  const ot = '<label>Text size <input type="number" id="optSc" value="' + (localStorage_get('optSc') || 3) + '" min="1" step="1"> px per dot <span class="px" id="optScpx"></span></label>';
+  const op = '<label>New objects <select id="newOp"><option value="add">add light (white)</option><option value="cut">cut (black)</option></select></label>';
+  const hint = {select: 'Click to select, Shift-click to add, drag a box to select several, drag to move, drag yellow handles to resize.',
+    rect: 'Drag to draw a rectangle (Shift = square).', circ: 'Press at the centre and drag out the radius.',
+    path: 'Click the points of the line; double-click or Enter to finish, Esc to cancel; Shift = 0/45/90°.',
+    poly: 'Click the corners; double-click or Enter to close the polygon.', text: 'Click where the text should start (top left).',
+    pan: 'Drag to pan. Wheel zooms.'}[t];
+  const keepOp = $('newOp') ? $('newOp').value : 'add';
+  $('opts').innerHTML = (t === 'path' ? ow : '') + (t === 'text' ? ot : '') + (['rect', 'circ', 'path', 'poly', 'text'].includes(t) ? op : '') + '<span class="dim">' + hint + '</span>';
+  if ($('newOp')) $('newOp').value = keepOp;
+  if ($('optW')){ const u = () => { $('optWpx').textContent = '= ' + Math.max(1, Math.round(+$('optW').value/S())) + ' px'; localStorage_set('optW', $('optW').value); }; $('optW').oninput = u; u(); }
+  if ($('optSc')){ const u = () => { $('optScpx').textContent = '(letters ' + 7*Math.max(1, Math.round(+$('optSc').value)) + ' px = ' + umPx(7*Math.max(1, Math.round(+$('optSc').value))) + ' tall)'; localStorage_set('optSc', $('optSc').value); }; $('optSc').oninput = u; u(); }
+  view.style.cursor = t === 'pan' ? 'grab' : t === 'select' ? 'default' : 'crosshair';
+  draw();
+}
+const lineW = () => Math.max(1, Math.round((+($('optW') ? $('optW').value : 20))/S()));
+function constrain(a, p){
+  const dx = p[0] - a[0], dy = p[1] - a[1], ang = Math.round(Math.atan2(dy, dx)/(Math.PI/4))*(Math.PI/4), L = Math.hypot(dx, dy);
+  const ux = Math.round(Math.cos(ang)), uy = Math.round(Math.sin(ang));
+  if (ux && uy){ const d = (Math.abs(dx) + Math.abs(dy))/2; return [a[0] + ux*d, a[1] + uy*d]; }
+  return [a[0] + ux*L, a[1] + uy*L];
+}
+function mousePx(e){ const r = view.getBoundingClientRect(); return toPxF(e.clientX - r.left, e.clientY - r.top); }
+function handleAt(p){
+  if (sel.size !== 1) return null; const o = byId([...sel][0]); if (!o) return null;
+  for (const h of handles(o)) if (Math.abs(h.x - p[0])*z <= 6 && Math.abs(h.y - p[1])*z <= 6) return h;
+  return null;
+}
+function topHit(p){ const tol = 4/z; for (let i = objs.length - 1; i >= 0; i--) if (hit(objs[i], p, tol)) return objs[i]; return null; }
+
+view.addEventListener('mousedown', e => {
+  view.focus();
+  let p = mousePx(e);
+  if (e.button === 1 || tool === 'pan' || spaceDown){ drag = {kind: 'pan', sx: e.clientX, sy: e.clientY, ox, oy}; e.preventDefault(); return; }
+  if (e.button !== 0) return;
+  if (tool === 'select'){
+    const h = handleAt(p);
+    if (h){ drag = {kind: 'handle', h, before: snapshot()}; return; }
+    const o = topHit(p);
+    if (o){
+      if (e.shiftKey){ sel.has(o.id) ? sel.delete(o.id) : sel.add(o.id); }
+      else if (!sel.has(o.id)) sel = new Set([o.id]);
+      drag = {kind: 'move', x0: p[0], y0: p[1], dx: 0, dy: 0, before: snapshot()};
+    } else { if (!e.shiftKey) sel.clear(); drag = {kind: 'marquee', x0: p[0], y0: p[1], x1: p[0], y1: p[1], add: e.shiftKey}; }
+    updateSide(); draw(); return;
+  }
+  p = snapPt(p);
+  if (tool === 'rect'){ const a = [Math.round(p[0]), Math.round(p[1])]; drag = {kind: 'rect', a, preview: {t: 'rect', x: a[0], y: a[1], w: 0, h: 0}}; return; }
+  if (tool === 'circ'){ drag = {kind: 'circ', c: [p[0], p[1]], preview: {t: 'circ', cx: Math.round(p[0]), cy: Math.round(p[1]), d: 1}}; return; }
+  if (tool === 'path' || tool === 'poly'){
+    const w = lineW(), q = tool === 'path' ? [snapC(p[0], w), snapC(p[1], w)] : [Math.round(p[0]), Math.round(p[1])];
+    if (!building){ building = {t: tool, pts: [q], w, cap: $('optCap') ? $('optCap').value : 'flat'}; }
+    else {
+      let qq = q; const last = building.pts[building.pts.length - 1];
+      if (e.shiftKey){ const c = constrain(last, p); qq = tool === 'path' ? [snapC(c[0], w), snapC(c[1], w)] : [Math.round(c[0]), Math.round(c[1])]; }
+      if (e.detail >= 2){ finishBuilding(true); return; }
+      if (qq[0] !== last[0] || qq[1] !== last[1]) building.pts.push(qq);
+    }
+    drag = {kind: 'build', preview: Object.assign({}, building, {pts: building.pts.slice()})};
+    draw(); return;
+  }
+  if (tool === 'text'){
+    const s = prompt('Text (capitals, digits and - . : / = + ( ) , % > < ! ? # _ \'):', 'A1'); if (!s) return;
+    const sc = Math.max(1, Math.round(+($('optSc') ? $('optSc').value : 3)));
+    const o = add({t: 'text', x: Math.round(p[0]), y: Math.round(p[1]), s: s.toUpperCase(), sc});
+    sel = new Set([o.id]); commit(); setTool('select');
+  }
+});
+addEventListener('mousemove', e => {
+  const p = mousePx(e);
+  const U = usable();
+  $('sCur').textContent = 'x ' + f2(toUm(p[0], 'x')) + ' µm, y ' + f2(toUm(p[1], 'y')) + ' µm   (DMD px ' + Math.floor(p[0]) + ', ' + Math.floor(p[1]) + ')';
+  const gp = snapPt(p);
+  if (!drag){ if (building){ const last = building.pts[building.pts.length - 1], w = building.w;
+      let q = e.shiftKey ? constrain(last, p) : gp; q = building.t === 'path' ? [snapC(q[0], w), snapC(q[1], w)] : [Math.round(q[0]), Math.round(q[1])];
+      buildPreview = Object.assign({}, building, {pts: [...building.pts, q]}); draw(); } return; }
+  if (drag.kind === 'pan'){ ox = drag.ox - (e.clientX - drag.sx)/z; oy = drag.oy - (e.clientY - drag.sy)/z; draw(); return; }
+  if (drag.kind === 'handle'){ drag.h.set(gp[0], gp[1]); dirty(true); return; }
+  if (drag.kind === 'move'){
+    const dx = snapD(p[0] - drag.x0), dy = snapD(p[1] - drag.y0);
+    if (dx !== drag.dx || dy !== drag.dy){ for (const id of sel) moveObj(byId(id), dx - drag.dx, dy - drag.dy); drag.dx = dx; drag.dy = dy; dirty(true); }
+    return;
+  }
+  if (drag.kind === 'marquee'){ drag.x1 = p[0]; drag.y1 = p[1]; draw(); return; }
+  if (drag.kind === 'rect'){
+    let b = [Math.round(gp[0]), Math.round(gp[1])];
+    if (e.shiftKey){ const s = Math.max(Math.abs(b[0] - drag.a[0]), Math.abs(b[1] - drag.a[1])); b = [drag.a[0] + Math.sign(b[0] - drag.a[0] || 1)*s, drag.a[1] + Math.sign(b[1] - drag.a[1] || 1)*s]; }
+    drag.preview = {t: 'rect', x: Math.min(drag.a[0], b[0]), y: Math.min(drag.a[1], b[1]), w: Math.abs(b[0] - drag.a[0]), h: Math.abs(b[1] - drag.a[1])};
+    $('sInfo').textContent = 'w ' + umPx(drag.preview.w) + ' (' + drag.preview.w + ' px), h ' + umPx(drag.preview.h) + ' (' + drag.preview.h + ' px)';
+    draw(); return;
+  }
+  if (drag.kind === 'circ'){
+    const d = Math.max(1, Math.round(2*Math.hypot(gp[0] - drag.c[0], gp[1] - drag.c[1])));
+    drag.preview = {t: 'circ', cx: snapC(drag.c[0], d), cy: snapC(drag.c[1], d), d};
+    $('sInfo').textContent = 'diameter ' + umPx(d) + ' (' + d + ' px)'; draw(); return;
+  }
+});
+let buildPreview = null;
+addEventListener('mouseup', e => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.kind === 'pan') return;
+  if (d.kind === 'handle' || d.kind === 'move'){ if (snapshot() !== d.before){ undoStack.push(d.before); redoStack = []; lastSaved = snapshot(); dirty(); } return; }
+  if (d.kind === 'marquee'){
+    const x0 = Math.min(d.x0, d.x1), x1 = Math.max(d.x0, d.x1), y0 = Math.min(d.y0, d.y1), y1 = Math.max(d.y0, d.y1);
+    if (x1 - x0 > 0.5 || y1 - y0 > 0.5) for (const o of objs){ const b = bbox(o); if (b[0] >= x0 && b[2] <= x1 && b[1] >= y0 && b[3] <= y1) sel.add(o.id); }
+    updateSide(); draw(); return;
+  }
+  if (d.kind === 'rect'){ if (d.preview.w >= 1 && d.preview.h >= 1){ const o = add(Object.assign({}, d.preview)); sel = new Set([o.id]); commit(); } $('sInfo').textContent = ''; draw(); return; }
+  if (d.kind === 'circ'){ const o = add(Object.assign({}, d.preview)); sel = new Set([o.id]); commit(); $('sInfo').textContent = ''; return; }
+  if (d.kind === 'build'){ buildPreview = Object.assign({}, building || {}, {pts: building ? building.pts.slice() : []}); draw(); }
+});
+function finishBuilding(keep){
+  const b = building; building = null; buildPreview = null;
+  if (keep && b){
+    if (b.t === 'path' && b.pts.length >= 2){ const o = add({t: 'path', pts: b.pts, w: b.w, cap: b.cap}); sel = new Set([o.id]); commit(); }
+    else if (b.t === 'poly' && b.pts.length >= 3){ const o = add({t: 'poly', pts: b.pts}); sel = new Set([o.id]); commit(); }
+  }
+  draw(); updateSide();
+}
+view.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = view.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top, [px, py] = toPxF(sx, sy);
+  z = Math.min(80, Math.max(0.1, z*Math.pow(1.0015, -e.deltaY))); ox = px - sx/z; oy = py - sy/z; draw();
+}, {passive: false});
+function zoomBy(f){ const r = view.getBoundingClientRect(), [px, py] = toPxF(r.width/2, r.height/2); z = Math.min(80, Math.max(0.1, z*f)); ox = px - r.width/2/z; oy = py - r.height/2/z; draw(); }
+
+// ================================================================ keyboard
+addEventListener('keydown', e => {
+  const ae = document.activeElement || {}, inField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName) && ae.type !== 'checkbox';
+  if (inField){ if (e.key === 'Enter' && ae.tagName === 'INPUT') ae.blur(); return; }
+  const k = e.key, kl = k.toLowerCase(), ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && kl === 'z'){ e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (ctrl && kl === 'y'){ e.preventDefault(); redo(); return; }
+  if (ctrl && kl === 'd'){ e.preventDefault(); duplicate(); return; }
+  if (ctrl && kl === 'a'){ e.preventDefault(); sel = new Set(objs.map(o => o.id)); updateSide(); draw(); return; }
+  if (ctrl && kl === 's'){ e.preventDefault(); saveDesign(); return; }
+  if (ctrl) return;
+  if (k === ' '){ spaceDown = true; e.preventDefault(); return; }
+  if (k === 'Escape'){ if (building) finishBuilding(false); else { sel.clear(); updateSide(); draw(); } return; }
+  if (k === 'Enter'){ if (building) finishBuilding(true); return; }
+  if (k === 'Delete' || k === 'Backspace'){ e.preventDefault(); delSel(); return; }
+  if (k.startsWith('Arrow') && sel.size){
+    e.preventDefault(); const s = e.shiftKey ? 10 : 1, dx = k === 'ArrowLeft' ? -s : k === 'ArrowRight' ? s : 0, dy = k === 'ArrowUp' ? -s : k === 'ArrowDown' ? s : 0;
+    for (const id of sel) moveObj(byId(id), dx, dy); commit(); return;
+  }
+  const map = {v: 'select', r: 'rect', c: 'circ', l: 'path', p: 'poly', t: 'text', h: 'pan'};
+  if (map[kl]) setTool(map[kl]);
+  else if (k === '0') fit();
+  else if (k === '+' || k === '=') zoomBy(1.5);
+  else if (k === '-') zoomBy(1/1.5);
+  else if (k === 'G'){ $('dGrid').checked = !$('dGrid').checked; gridInfo(); draw(); }
+  else if (kl === 'g'){ $('showGrid').checked = !$('showGrid').checked; draw(); }
+});
+addEventListener('keyup', e => { if (e.key === ' ') spaceDown = false; });
+
+// ================================================================ edit operations
+function duplicate(){
+  if (!sel.size) return;
+  const n = new Set();
+  for (const id of [...sel]){ const c = JSON.parse(JSON.stringify(byId(id))); moveObj(c, 10, 10); const o = add(c); if (imgCache.has(id)) imgCache.set(o.id, imgCache.get(id)); n.add(o.id); }
+  sel = n; commit();
+}
+function delSel(){ if (!sel.size) return; objs = objs.filter(o => !sel.has(o.id)); sel.clear(); commit(); }
+function mirrorCopy(axis){                  // mirror about the centre line of the usable area
+  const U = usable(), n = new Set();
+  for (const id of [...sel]){
+    const c = JSON.parse(JSON.stringify(byId(id))), mx = v => 2*U.cx - v, my = v => 2*U.cy - v;
+    if (c.t === 'rect' || c.t === 'img' || c.t === 'text'){
+      if (c.t === 'text'){ alert('Text cannot be mirrored (it would read backwards). Copy and place it by hand.'); continue; }
+      if (axis === 'x') c.x = Math.round(mx(c.x + c.w)); else c.y = Math.round(my(c.y + c.h));
+      if (c.t === 'img'){ const m = imgCache.get(id), m2 = new Uint8Array(m.length);
+        for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) m2[y*c.w + x] = axis === 'x' ? m[y*c.w + (c.w - 1 - x)] : m[(c.h - 1 - y)*c.w + x];
+        const o = add(c); imgCache.set(o.id, m2); c.data = maskToDataURL(m2, c.w, c.h); n.add(o.id); continue; }
+    }
+    if (c.t === 'circ'){ if (axis === 'x') c.cx = mx(c.cx); else c.cy = my(c.cy); }
+    if (c.pts) c.pts = c.pts.map(p => axis === 'x' ? [mx(p[0]), p[1]] : [p[0], my(p[1])]);
+    n.add(add(c).id);
+  }
+  sel = n; commit();
+}
+function arrayCopy(nx, ny, px, py){
+  const src = [...sel].map(byId), n = new Set(src.map(o => o.id));
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++){
+    if (!i && !j) continue;
+    for (const s of src){ const c = JSON.parse(JSON.stringify(s)); moveObj(c, i*px, j*py); const o = add(c); if (imgCache.has(s.id)) imgCache.set(o.id, imgCache.get(s.id)); n.add(o.id); }
+  }
+  sel = n; commit();
+}
+function reorder(dir){
+  if (!sel.size) return;
+  const ids = sel;
+  if (dir === 'top') objs = [...objs.filter(o => !ids.has(o.id)), ...objs.filter(o => ids.has(o.id))];
+  else objs = [...objs.filter(o => ids.has(o.id)), ...objs.filter(o => !ids.has(o.id))];
+  commit();
+}
+
+// ================================================================ side panel
+function numField(id, label, val, note){ return '<label>' + label + ' <input type="number" step="any" id="' + id + '" value="' + val + '"> µm <span class="px" id="' + id + 'px">' + (note || '') + '</span></label>'; }
+function ptsText(pts){ return pts.map(p => f2(toUm(p[0], 'x')) + ', ' + f2(toUm(p[1], 'y'))).join('\n'); }
+function parsePts(s){ return s.trim().split(/\n+/).map(l => l.split(/[\s,;]+/).filter(Boolean).map(Number)).filter(r => r.length >= 2 && r.every(isFinite)).map(r => [fromUm(r[0], 'x'), fromUm(r[1], 'y')]); }
+function updateSide(){
+  const P = $('props');
+  if (!sel.size){ P.className = 'dim'; P.innerHTML = 'Nothing selected. Click an object, or drag a box around several.'; listObjs(); return; }
+  P.className = '';
+  const common = '<div class="row"><button id="pDup">Duplicate</button><button id="pDel">Delete</button><button id="pTop">To top</button><button id="pBot">To bottom</button></div>' +
+    '<div class="row"><button id="pMx">Mirror copy ↔</button><button id="pMy">Mirror copy ↕</button></div>' +
+    '<div class="dim" style="margin-top:4px">Array copy (incl. the original):</div>' +
+    '<div class="row"><input type="number" id="aNx" value="2" min="1" style="width:44px"> × <input type="number" id="aNy" value="1" min="1" style="width:44px"> pitch ' +
+    '<input type="number" id="aPx" value="100" step="any" style="width:64px"> , <input type="number" id="aPy" value="100" step="any" style="width:64px"> µm <button id="pArr">Make</button></div>';
+  if (sel.size > 1){
+    P.innerHTML = '<div>' + sel.size + ' objects selected</div><div class="row">Move by ' +
+      '<input type="number" id="mDx" value="0" step="any" style="width:64px"> , <input type="number" id="mDy" value="0" step="any" style="width:64px"> µm <button id="pMove">Move</button></div>' +
+      '<label>Light <select id="pOpAll"><option value="">—</option><option value="add">add</option><option value="cut">cut</option></select></label>' + common;
+    $('pMove').onclick = () => { const dx = Math.round(+$('mDx').value/S()), dy = Math.round(+$('mDy').value/S()); for (const id of sel) moveObj(byId(id), dx, dy); commit(); };
+    $('pOpAll').onchange = () => { if ($('pOpAll').value){ for (const id of sel) byId(id).op = $('pOpAll').value; commit(); } };
+  } else {
+    const o = byId([...sel][0]); if (!o){ sel.clear(); return updateSide(); }
+    let h = '<div><b>' + describe(o) + '</b></div><label>Light <select id="pOp"><option value="add">add (white)</option><option value="cut">cut (black)</option></select></label>';
+    if (o.t === 'rect') h += numField('pCx', 'Centre x', f2(toUm(o.x + o.w/2, 'x'))) + numField('pCy', 'Centre y', f2(toUm(o.y + o.h/2, 'y'))) +
+      numField('pW', 'Width', f2(o.w*S()), o.w + ' px') + numField('pH', 'Height', f2(o.h*S()), o.h + ' px') +
+      '<div class="dim">Edges: x ' + f2(toUm(o.x, 'x')) + ' … ' + f2(toUm(o.x + o.w, 'x')) + ', y ' + f2(toUm(o.y, 'y')) + ' … ' + f2(toUm(o.y + o.h, 'y')) + ' µm</div>';
+    if (o.t === 'circ') h += numField('pCx', 'Centre x', f2(toUm(o.cx, 'x'))) + numField('pCy', 'Centre y', f2(toUm(o.cy, 'y'))) + numField('pD', 'Diameter', f2(o.d*S()), o.d + ' px');
+    if (o.t === 'path') h += numField('pW', 'Line width', f2(o.w*S()), o.w + ' px') +
+      '<label>Ends <select id="pCap"><option value="flat">flat</option><option value="square">square (+w/2)</option></select></label>' +
+      '<div class="dim">Points (x, y in µm, one per line):</div><textarea id="pPts" rows="6">' + ptsText(o.pts) + '</textarea><button id="pApplyPts">Apply points</button>';
+    if (o.t === 'poly') h += '<div class="dim">Corners (x, y in µm, one per line):</div><textarea id="pPts" rows="6">' + ptsText(o.pts) + '</textarea><button id="pApplyPts">Apply points</button>';
+    if (o.t === 'text') h += '<label>Text <input id="pS" value="' + String(o.s).replace(/"/g, '&quot;') + '" style="width:150px"></label>' +
+      '<label>Size <input type="number" id="pSc" value="' + o.sc + '" min="1" step="1"> px per dot <span class="px">' + umPx(7*o.sc) + ' tall</span></label>' +
+      numField('pX', 'Left', f2(toUm(o.x, 'x'))) + numField('pY', 'Top', f2(toUm(o.y, 'y')));
+    if (o.t === 'img') h += numField('pX', 'Left', f2(toUm(o.x, 'x'))) + numField('pY', 'Top', f2(toUm(o.y, 'y'))) + '<div class="dim">' + o.w + ' × ' + o.h + ' px (' + umPx(o.w) + ' × ' + umPx(o.h) + ')</div>';
+    P.innerHTML = h + common;
+    $('pOp').value = o.op; $('pOp').onchange = () => { o.op = $('pOp').value; commit(); };
+    const num = id => +$(id).value;
+    const bind = (ids, fn) => ids.forEach(id => $(id) && ($(id).onchange = () => { fn(); commit(); }));
+    if (o.t === 'rect') bind(['pCx', 'pCy', 'pW', 'pH'], () => { o.w = Math.max(1, Math.round(num('pW')/S())); o.h = Math.max(1, Math.round(num('pH')/S()));
+      o.x = Math.round(fromUm(num('pCx'), 'x') - o.w/2); o.y = Math.round(fromUm(num('pCy'), 'y') - o.h/2); });
+    if (o.t === 'circ') bind(['pCx', 'pCy', 'pD'], () => { o.d = Math.max(1, Math.round(num('pD')/S())); o.cx = snapC(fromUm(num('pCx'), 'x'), o.d); o.cy = snapC(fromUm(num('pCy'), 'y'), o.d); });
+    if (o.t === 'path'){ $('pCap').value = o.cap || 'flat'; $('pCap').onchange = () => { o.cap = $('pCap').value; commit(); };
+      bind(['pW'], () => { o.w = Math.max(1, Math.round(num('pW')/S())); o.pts = o.pts.map(p => [snapC(p[0], o.w), snapC(p[1], o.w)]); }); }
+    if (o.pts) $('pApplyPts').onclick = () => { const q = parsePts($('pPts').value); if (q.length < (o.t === 'poly' ? 3 : 2)) return alert('Not enough points.');
+      o.pts = q.map(p => o.t === 'path' ? [snapC(p[0], o.w), snapC(p[1], o.w)] : [Math.round(p[0]), Math.round(p[1])]); commit(); };
+    if (o.t === 'text') bind(['pS', 'pSc', 'pX', 'pY'], () => { o.s = $('pS').value.toUpperCase(); o.sc = Math.max(1, Math.round(num('pSc'))); o.x = Math.round(fromUm(num('pX'), 'x')); o.y = Math.round(fromUm(num('pY'), 'y')); });
+    if (o.t === 'img') bind(['pX', 'pY'], () => { o.x = Math.round(fromUm(num('pX'), 'x')); o.y = Math.round(fromUm(num('pY'), 'y')); });
+  }
+  $('pDup').onclick = duplicate; $('pDel').onclick = delSel; $('pTop').onclick = () => reorder('top'); $('pBot').onclick = () => reorder('bottom');
+  $('pMx').onclick = () => mirrorCopy('x'); $('pMy').onclick = () => mirrorCopy('y');
+  $('pArr').onclick = () => arrayCopy(Math.max(1, Math.round(+$('aNx').value)), Math.max(1, Math.round(+$('aNy').value)), Math.round(+$('aPx').value/S()), Math.round(+$('aPy').value/S()));
+  listObjs();
+}
+function listObjs(){
+  $('objlist').innerHTML = objs.slice().reverse().map(o => '<div data-id="' + o.id + '" class="' + (sel.has(o.id) ? 's' : '') + '">' + (o.op === 'cut' ? '− ' : '+ ') + describe(o) + '</div>').join('') || '<div class="dim">empty</div>';
+}
+$('objlist').onclick = e => { const d = e.target.closest('[data-id]'); if (!d) return; const id = +d.dataset.id;
+  if (e.shiftKey){ sel.has(id) ? sel.delete(id) : sel.add(id); } else sel = new Set([id]); updateSide(); draw(); };
+function checks(){
+  const U = usable(), out = [];
+  if (!rasterValid) rasterize();
+  let on = 0, outside = 0;
+  for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) if (raster[i]){ on++; if (x < U.x0 || x >= U.x1 || y < U.y0 || y >= U.y1) outside++; }
+  const small = objs.filter(o => o.op !== 'cut' && minFeature(o) < 3), smallCut = objs.filter(o => o.op === 'cut' && minFeature(o) < 4);
+  out.push('<div>' + objs.length + ' objects, ' + (100*on/(W*H)).toFixed(2) + ' % of the DMD lit.</div>');
+  out.push(outside ? '<div class="bad">' + outside + ' lit px outside the usable area (blacked out at exposure).</div>' : '<div class="ok">Everything inside the usable area.</div>');
+  if (small.length) out.push('<div class="warn">' + small.length + ' lit feature(s) under 3 px (' + umPx(3) + '): may print weakly or not at all.</div>');
+  if (smallCut.length) out.push('<div class="warn">' + smallCut.length + ' cut feature(s) under 4 px: dark gaps this narrow tend to close.</div>');
+  out.push('<div class="dim">Size of the lit area: ' + bboxLit() + '</div>');
+  $('checks').innerHTML = out.join('');
+}
+function bboxLit(){
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) if (raster[i]){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  return x1 < 0 ? '—' : (x1 - x0 + 1) + ' × ' + (y1 - y0 + 1) + ' px = ' + f2((x1 - x0 + 1)*S()) + ' × ' + f2((y1 - y0 + 1)*S()) + ' µm';
+}
+function useInfo(){ const U = usable(); $('useInfo').textContent = (U.x1 - U.x0) + ' × ' + (U.y1 - U.y0) + ' px = ' + f2((U.x1 - U.x0)*S()/1000) + ' × ' + f2((U.y1 - U.y0)*S()/1000) + ' mm; origin (0, 0) at its centre, DMD px ' + U.cx + ', ' + U.cy + '.'; }
+
+let saveTimer = null;
+function dirty(live){
+  rasterValid = false; rasterize(); draw();
+  if (!live){ updateSide(); checks(); clearTimeout(saveTimer); saveTimer = setTimeout(autosave, 400); }
+}
+
+// ================================================================ files
+function localStorage_get(k){ try { return localStorage.getItem('maskdesigner.' + k); } catch(e){ return null; } }
+function localStorage_set(k, v){ try { localStorage.setItem('maskdesigner.' + k, v); } catch(e){} }
+function designJSON(){
+  return JSON.stringify({format: 'maskdesigner/1', name: $('dName').value, scale_um_per_px: S(), dmd: [W, H],
+    usable: (({x0, y0, x1, y1}) => ({x0, y0, x1, y1}))(usable()), inverted_export: $('invert').checked,
+    note: 'Coordinates in DMD pixels (x right, y down, 0,0 = top-left DMD corner). op add = lit, cut = dark.', objects: objs}, null, 1);
+}
+function autosave(){ localStorage_set('design', designJSON()); }
+function download(name, url){ const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+function saveDesign(){ download(($('dName').value || 'mask') + '.mask.json', URL.createObjectURL(new Blob([designJSON()], {type: 'application/json'}))); }
+async function loadDesign(txt, quiet){
+  const d = JSON.parse(txt); if (!d.objects) throw new Error('not a mask design file');
+  $('dName').value = d.name || 'mask';
+  if (d.scale_um_per_px){ $('scale').value = d.scale_um_per_px; $('scaleSel').value = ['2.2', '4.4'].includes(String(d.scale_um_per_px)) ? String(d.scale_um_per_px) : 'custom'; }
+  if (d.usable){ $('useX0').value = d.usable.x0; $('useX1').value = d.usable.x1; $('useY0').value = d.usable.y0; $('useY1').value = d.usable.y1; }
+  $('invert').checked = !!d.inverted_export;
+  objs = d.objects; nextId = Math.max(0, ...objs.map(o => o.id || 0)) + 1; objs.forEach(o => { if (!o.id) o.id = nextId++; });
+  imgCache.clear();
+  for (const o of objs) if (o.t === 'img' && o.data) imgCache.set(o.id, await dataURLToMask(o.data, o.w, o.h));
+  sel.clear(); undoStack = []; redoStack = []; lastSaved = snapshot(); useInfo(); dirty(); if (!quiet) fit();
+}
+function maskToDataURL(m, w, h){
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'), im = g.createImageData(w, h);
+  for (let i = 0; i < m.length; i++){ const v = m[i] ? 255 : 0; im.data[4*i] = im.data[4*i+1] = im.data[4*i+2] = v; im.data[4*i+3] = 255; }
+  g.putImageData(im, 0, 0); return c.toDataURL('image/png');
+}
+async function dataURLToMask(url, w, h){
+  const im = new Image(); im.src = url; await im.decode();
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(im, 0, 0);
+  const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w*h);
+  for (let i = 0; i < m.length; i++) m[i] = (0.299*d[4*i] + 0.587*d[4*i+1] + 0.114*d[4*i+2]) >= 128 ? 1 : 0;
+  return m;
+}
+$('bNew').onclick = () => { if (objs.length && !confirm('Start a new, empty design? (Save first if you want to keep this one.)')) return;
+  objs = []; sel.clear(); undoStack = []; redoStack = []; lastSaved = snapshot(); $('dName').value = 'mask'; dirty(); };
+$('bOpen').onclick = () => $('fOpen').click();
+$('fOpen').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { await loadDesign(await f.text()); toast('Opened ' + f.name); } catch(err){ alert('Could not open: ' + err.message); } };
+$('bSave').onclick = saveDesign;
+$('bImport').onclick = () => $('fImport').click();
+$('fImport').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const bmp = await createImageBitmap(f), w = bmp.width, h = bmp.height;
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d', {willReadFrequently: true}); g.drawImage(bmp, 0, 0);
+  const d = g.getImageData(0, 0, w, h).data, m = new Uint8Array(w*h);
+  for (let i = 0; i < m.length; i++) m[i] = (0.299*d[4*i] + 0.587*d[4*i+1] + 0.114*d[4*i+2]) >= 128 ? 1 : 0;
+  const U = usable(), full = w === W && h === H;
+  const o = add({t: 'img', x: full ? 0 : Math.round(U.cx - w/2), y: full ? 0 : Math.round(U.cy - h/2), w, h, name: f.name, data: maskToDataURL(m, w, h)});
+  imgCache.set(o.id, m); sel = new Set([o.id]); commit(); toast('Imported ' + f.name + ' (' + w + ' × ' + h + ' px, 1:1, white = lit)');
+};
+$('bExport').onclick = () => { download(($('dName').value || 'mask') + '_' + W + 'x' + H + '_' + S() + 'um_px' + ($('invert').checked ? '_inv' : '') + '.png', exportDataURL()); };
+// ---------------- send to the exposure window
+let exposeWin = null, sendTimer = null;
+function sendToExpose(){
+  const msg = {type: 'mask', name: ($('dName').value || 'mask') + ($('invert').checked ? ' (inv)' : ''), png: exportDataURL(), scale: S()};
+  if (!exposeWin || exposeWin.closed){
+    exposeWin = window.open(new URL('expose.html', location.href).href, 'maskexpose');
+    if (!exposeWin){ alert('The browser blocked the new window. Allow pop-ups for this file, or use Export PNG and load it in expose.html.'); return; }
+    toast('Opening the exposure window…');
+  }
+  clearInterval(sendTimer); let n = 0;
+  const tryOnce = () => { try { exposeWin.postMessage(msg, '*'); } catch(e){} if (++n > 50){ clearInterval(sendTimer); toast('No answer from the exposure window. Use Export PNG instead.', true); } };
+  pendingMsg = msg; tryOnce(); sendTimer = setInterval(tryOnce, 300);
+}
+let pendingMsg = null;
+addEventListener('message', e => {
+  const m = e.data; if (!m) return;
+  if (m.type === 'exposeReady' && pendingMsg){ try { e.source.postMessage(pendingMsg, '*'); } catch(err){} }
+  if (m.type === 'ack'){ clearInterval(sendTimer); pendingMsg = null; toast(m.ok ? 'Mask sent to the exposure window.' : 'Exposure window refused: ' + m.why, !m.ok); }
+});
+$('bSend').onclick = sendToExpose;
+function toast(s, bad){ const t = $('toast'); t.textContent = s; t.style.borderColor = bad ? '#ff8a6b' : '#6ee7a8'; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3500); }
+
+// ================================================================ examples
+function example(k){
+  const U = usable(), c = Math.round(U.cx), s = S(), px = um => Math.round(um/s);
+  const list = [];
+  if (k === 'fig1'){
+    $('scale').value = 2.2; $('scaleSel').value = '2.2'; $('dName').value = 'figure1_electrodes';
+    const padW = 91, sep = 340, gap = 41, lead = 9, leadLen = 227, armTop = 232;
+    const half = [];
+    const tip = c - (gap >> 1), pcx = c - sep/2, px0 = pcx - (padW >> 1), pr = px0 + padW, lx0 = pr - lead, py0 = armTop + leadLen;
+    half.push({t: 'rect', x: px0, y: py0, w: padW, h: padW}, {t: 'rect', x: lx0, y: armTop, w: lead, h: leadLen}, {t: 'rect', x: lx0, y: armTop, w: tip - lx0, h: lead});
+    for (const x of [tip - 6, tip - 2]) half.push({t: 'rect', x, y: armTop - 16, w: 2, h: 2}, {t: 'rect', x, y: armTop + lead + 7, w: 2, h: 2});
+    for (const o of half){ list.push(o); list.push(Object.assign({}, o, {x: 2*c + 1 - o.x - o.w})); }
+  }
+  if (k === 'marks'){
+    $('dName').value = 'alignment_marks';
+    const cross = (x, y, L, w) => [{t: 'rect', x: x - (L >> 1), y: y - (w >> 1), w: L, h: w}, {t: 'rect', x: x - (w >> 1), y: y - (L >> 1), w, h: L}];
+    for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) list.push(...cross(c + dx*350, Math.round(U.cy) + dy*300, 61, 5));
+    list.push({t: 'rect', x: c - 40, y: Math.round(U.cy) - 40, w: 80, h: 80}, {t: 'rect', x: c - 20, y: Math.round(U.cy) - 20, w: 40, h: 40, op: 'cut'});
+    list.push({t: 'text', x: c - 150, y: Math.round(U.cy) + 120, s: 'CHIP A1', sc: 6});
+  }
+  objs = []; nextId = 1; list.forEach(o => add(Object.assign({}, o, {op: o.op || 'add'}))); sel.clear(); commit(); fit();
+}
+$('examples').onchange = e => { const k = e.target.value; e.target.value = ''; if (!k) return;
+  if (objs.length && !confirm('Replace the current design with the example?')) return; example(k); };
+
+// ================================================================ settings wiring
+$('scaleSel').onchange = () => { if ($('scaleSel').value !== 'custom') $('scale').value = $('scaleSel').value; scaleChanged(); };
+$('scale').onchange = () => { $('scaleSel').value = ['2.2', '4.4'].includes(String(+$('scale').value)) ? String(+$('scale').value) : 'custom'; scaleChanged(); };
+function scaleChanged(){ useInfo(); gridInfo(); setTool(tool); updateSide(); checks(); draw(); autosave(); toast('Scale ' + S() + ' µm/px: objects keep their size in pixels; their size in µm changes.'); }
+['useX0', 'useX1', 'useY0', 'useY1'].forEach(id => $(id).onchange = () => { useInfo(); rasterCanvasValid = false; updateSide(); checks(); draw(); autosave(); });
+['showRaster', 'showOutl', 'showGrid'].forEach(id => $(id).onchange = draw);
+['dGrid', 'gridUm', 'gridSnap'].forEach(id => $(id).addEventListener(id === 'gridUm' ? 'input' : 'change', () => {
+  if (id === 'gridSnap' && snapOn()) $('dGrid').checked = true; gridInfo(); draw(); }));
+$('invert').onchange = autosave; $('dName').onchange = autosave;
+document.querySelectorAll('#tools button[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+$('bFit').onclick = fit; $('bZin').onclick = () => zoomBy(1.5); $('bZout').onclick = () => zoomBy(1/1.5);
+$('bUndo').onclick = undo; $('bRedo').onclick = redo; $('bDup').onclick = duplicate; $('bDel').onclick = delSel;
+$('bAll').onclick = () => { sel = new Set(objs.map(o => o.id)); updateSide(); draw(); };
+new ResizeObserver(() => draw()).observe($('wrap'));
+view.tabIndex = 0;
+
+// ================================================================ start
+(async () => {
+  if (localStorage_get('gridUm')) $('gridUm').value = localStorage_get('gridUm');
+  $('dGrid').checked = !!localStorage_get('dGrid'); $('gridSnap').checked = !!localStorage_get('gridSnap');
+  setTool('select'); useInfo(); gridInfo();
+  const saved = localStorage_get('design');
+  if (saved){ try { await loadDesign(saved, true); } catch(e){} }
+  dirty(); fit();
+})();
+</script></body></html>

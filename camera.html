@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Exposure camera</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{--bg:#0b0b0d;--panel:#141418;--line:#2a2a30;--ink:#ddd;--dim:#888;--acc:#a883ff;--warn:#ffcf6b;--bad:#ff8a6b;--ok:#6ee7a8}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+  #app{display:grid;grid-template-columns:1fr 340px;height:100%}
+  #stage{position:relative;overflow:hidden;background:#000}
+  #gl,#ov{position:absolute;left:0;top:0}
+  #ov{cursor:crosshair}
+  #side{background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:12px 14px}
+  h1{font-size:14px;margin:0 0 6px;letter-spacing:.06em;color:#fff}
+  h2{font-size:11px;margin:16px 0 6px;letter-spacing:.12em;color:var(--dim);font-weight:400;border-top:1px solid var(--line);padding-top:10px}
+  .row{display:flex;align-items:center;gap:8px;margin:4px 0}
+  .row label{flex:0 0 118px;color:#bbb}
+  .row input[type=range]{flex:1;min-width:60px}
+  .row .val{flex:0 0 74px;text-align:right;color:#fff}
+  select,input,button{background:#1d1d22;border:1px solid #33333c;color:#fff;font:12px ui-monospace,monospace;padding:3px 6px}
+  input[type=number]{width:70px}
+  button{cursor:pointer} button:hover{border-color:#777}
+  button.on{border-color:var(--acc);color:var(--acc)}
+  .btns{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+  .note{color:var(--dim);font-size:12px;margin:4px 0}
+  .warn{color:var(--warn)} .bad{color:var(--bad)} .ok{color:var(--ok)}
+  #hist{width:100%;height:70px;background:#000;border:1px solid var(--line);display:block}
+  #marks div{display:flex;justify-content:space-between}
+  #msg{position:absolute;left:12px;top:10px;color:var(--warn);font-size:12px;text-shadow:0 0 4px #000;pointer-events:none}
+  #hud{position:absolute;right:12px;top:10px;color:#fff;font-size:12px;text-shadow:0 0 4px #000;pointer-events:none;text-align:right}
+  details{margin-top:8px} summary{cursor:pointer;color:#bbb}
+  pre{white-space:pre-wrap;background:#0f0f12;border:1px solid var(--line);padding:8px;font-size:11.5px;color:#ccc}
+</style></head><body>
+<div id="app">
+  <div id="stage"><canvas id="gl"></canvas><canvas id="ov"></canvas><div id="msg"></div><div id="hud"></div></div>
+  <div id="side">
+    <h1>EXPOSURE CAMERA</h1>
+    <div class="note">Logitech C920 / C930e (any UVC camera). Use Chrome or Edge: they expose manual exposure, focus and
+    white balance. Run this window on the laptop screen and the pattern viewer fullscreen on the projector.</div>
+
+    <h2>CAMERA</h2>
+    <div class="row"><label>Device</label><select id="dev" style="flex:1"></select></div>
+    <div class="row"><label>Resolution</label><select id="res">
+      <option value="1920x1080">1920 × 1080</option><option value="1280x720" selected>1280 × 720</option>
+      <option value="640x480">640 × 480</option></select></div>
+    <div class="row"><label>Frame rate</label><select id="fps">
+      <option value="30" selected>30 fps (exposure up to 33.3 ms)</option><option value="15">15 fps (up to 66.7 ms)</option>
+      <option value="10">10 fps (up to 100 ms)</option><option value="5">5 fps (up to 200 ms)</option></select></div>
+    <div class="note">Dynamic frame rate (exposure_dynamic_framerate) is not reachable from a browser, and it only acts in
+    automatic exposure. In manual exposure, keep the exposure time at or below one camera frame (see the list), and
+    pick a lower frame rate for longer exposures. The measured frame rate is shown top right.</div>
+    <div class="btns"><button id="start">Start camera</button><button id="stop">Stop</button></div>
+    <div id="capnote" class="note"></div>
+
+    <h2>EXPOSURE AND IMAGE (manual)</h2>
+    <div id="ctrls"></div>
+    <div class="note">Exposure time is in units of 100 µs (333 = 33.3 ms). Use whole projector frames
+    (16.7 / 33.3 / 50 ms) to avoid flicker and banding from the DMD.</div>
+    <div class="btns" id="frameBtns"></div>
+    <div class="btns"><button id="lockAll">Lock everything manual</button><button id="readBack">Read back settings</button></div>
+
+    <h2>VIEW</h2>
+    <div class="row"><label>Channel</label><select id="mode">
+      <option value="0">RGB</option><option value="3" selected>Blue (405 nm) grey</option>
+      <option value="5">Blue, false colour</option><option value="2">Green grey</option>
+      <option value="1">Red grey</option><option value="4">Max of RGB</option></select></div>
+    <div class="row"><label>Display gain</label><input type="range" id="gain" min="1" max="16" step="0.5" value="1"><span class="val" id="gainV">1×</span></div>
+    <div class="note">Display gain only brightens the screen. It does not change the camera or the saved images.</div>
+    <div class="btns">
+      <button id="clipB" class="on">Show clipping (red)</button><button id="crossB" class="on">Crosshair</button>
+      <button id="gridB">Grid</button><button id="freezeB">Freeze</button><button id="mirrorB">Mirror</button>
+    </div>
+
+    <h2>CLICK ON IMAGE</h2>
+    <div class="row"><label>Click does</label><select id="clickMode">
+      <option value="mark">Add ROI marker (15×15 px)</option><option value="meas">Measure distance</option></select></div>
+    <div class="btns"><button id="clearM">Clear markers</button></div>
+    <div id="marks" class="note"></div>
+    <div id="measOut" class="note"></div>
+    <div class="row"><label>Scale</label><input type="number" id="scale" step="0.001" min="0" placeholder="µm/px"><span class="note">µm per camera px</span></div>
+    <div class="row"><label>Known length</label><input type="number" id="known" step="0.1" min="0" placeholder="µm"><button id="setScale">Set scale from last measurement</button></div>
+    <div class="note">Example: measure between two crosses of pattern 02 that are 4 crosses apart
+    (4 × 64 DMD px = 256 px ≈ 563 µm at 2.2 µm/px), or use a stage micrometer.</div>
+
+    <h2>FOCUS METER</h2>
+    <canvas id="fplot" width="300" height="90" style="width:100%;height:90px;background:#000;border:1px solid var(--line);display:block"></canvas>
+    <div id="fout" class="note"></div>
+    <div class="btns"><button id="fReset">Reset peaks</button></div>
+    <div class="note">Turn the stand's focus knob slowly through focus. The score is image sharpness
+    (gradient energy / brightness², on Max of RGB) in 128 × 128 px around each ROI marker (up to 4), or in the
+    central 256 × 256 px without markers. Best focus = peak. More precise: note the knob position where the
+    score falls to 80 % on each side, and set the middle. Markers at opposite edges of the field show tilt:
+    their peaks come at different knob positions.</div>
+
+    <h2>STATISTICS (selected channel, full resolution)</h2>
+    <canvas id="hist" width="256" height="70"></canvas>
+    <div id="stats" class="note"></div>
+
+    <h2>SAVE</h2>
+    <div class="btns"><button id="snap">Snapshot PNG</button>
+      <button id="avg">Average N frames</button><select id="avgN" title="N"><option>4</option><option selected>16</option><option>64</option></select>
+      <button id="rec">Record video</button></div>
+    <div class="note">Snapshots are the raw camera frame (all channels), not the display view. The file name
+    holds the time and the exposure setting.</div>
+
+    <details><summary>Fallback without Chrome controls</summary>
+<pre>LINUX (v4l2-ctl, run after the camera is opened):
+  v4l2-ctl -d /dev/video0 --list-ctrls
+  v4l2-ctl -d /dev/video0 -c auto_exposure=1 \
+     -c exposure_time_absolute=333 -c exposure_dynamic_framerate=0 \
+     -c gain=0 -c white_balance_automatic=0 -c white_balance_temperature=4000 \
+     -c focus_automatic_continuous=0 -c focus_absolute=0 \
+     -c sharpness=0 -c backlight_compensation=0 -c power_line_frequency=1
+  Older kernels name them exposure_auto=1, exposure_absolute,
+  exposure_auto_priority=0, white_balance_temperature_auto=0, focus_auto=0.
+
+WINDOWS:
+  OBS: add Video Capture Device > Properties > Configure Video >
+  Camera Control: untick Auto for Exposure and Focus;
+  Video Proc Amp: untick Auto for White Balance, set Gain.
+  In Logitech software (Logi Tune), turn RightLight off.
+
+MAC:
+  Use an app that sets UVC controls (e.g. "Webcam Settings"),
+  then open this page; Chrome on Mac exposes only some controls.</pre></details>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const store = {
+  get(){ try{ return JSON.parse(localStorage.getItem('expcam') || '{}'); }catch(e){ return {}; } },
+  set(o){ try{ localStorage.setItem('expcam', JSON.stringify(o)); }catch(e){} }
+};
+let S = store.get(); S.ctrl = S.ctrl || {};
+const video = document.createElement('video'); video.muted = true; video.playsInline = true;
+let stream = null, track = null, caps = {}, frozen = false, mirror = !!S.mirror;
+let showClip = S.clip !== false, showCross = S.cross !== false, showGrid = !!S.grid;
+let marks = [], meas = [], lastMeasPx = null;
+
+// ---------------------------------------------------------------- WebGL display
+const gl = $('gl').getContext('webgl', {preserveDrawingBuffer: true});
+const ov = $('ov'), oc = ov.getContext('2d');
+const VS = 'attribute vec2 p;varying vec2 uv;uniform float mir;void main(){uv=vec2(mix(p.x*.5+.5,.5-p.x*.5,mir),.5-p.y*.5);gl_Position=vec4(p,0.,1.);}';
+const FS = `precision mediump float;varying vec2 uv;uniform sampler2D t;uniform int mode;uniform float gain;uniform int clip;
+vec3 ramp(float v){v=clamp(v,0.,1.);
+ vec3 a=vec3(0.,0.,0.),b=vec3(0.,0.,.8),c=vec3(0.,.8,.9),d=vec3(.1,.9,.2),e=vec3(1.,.9,0.),f=vec3(1.,.2,0.);
+ if(v<.2)return mix(a,b,v/.2);if(v<.4)return mix(b,c,(v-.2)/.2);if(v<.6)return mix(c,d,(v-.4)/.2);
+ if(v<.8)return mix(d,e,(v-.6)/.2);return mix(e,f,(v-.8)/.2);}
+void main(){vec3 c=texture2D(t,uv).rgb;float v;vec3 o;
+ if(mode==0){o=c*gain;v=max(c.r,max(c.g,c.b));}
+ else{ if(mode==1)v=c.r;else if(mode==2)v=c.g;else if(mode==4)v=max(c.r,max(c.g,c.b));else v=c.b;
+   o=(mode==5)?ramp(v*gain):vec3(v*gain);}
+ if(clip==1&&v>=0.985)o=vec3(1.,0.,0.);
+ gl_FragColor=vec4(o,1.);}`;
+function sh(type, src){ const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+const U = n => gl.getUniformLocation(prog, n);
+
+// layout: fit the video into the stage, keep aspect
+let view = {x: 0, y: 0, w: 1, h: 1, vw: 1, vh: 1};
+function layout(){
+  const st = $('stage').getBoundingClientRect(), vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const s = Math.min(st.width/vw, st.height/vh), w = Math.floor(vw*s), h = Math.floor(vh*s);
+  const x = Math.floor((st.width - w)/2), y = Math.floor((st.height - h)/2);
+  view = {x, y, w, h, vw, vh, s};
+  const dpr = window.devicePixelRatio || 1;
+  for (const c of [$('gl'), ov]){ c.style.left = x + 'px'; c.style.top = y + 'px'; c.style.width = w + 'px'; c.style.height = h + 'px'; }
+  $('gl').width = vw; $('gl').height = vh; ov.width = Math.round(w*dpr); ov.height = Math.round(h*dpr);
+  gl.viewport(0, 0, vw, vh);
+}
+addEventListener('resize', layout);
+
+function render(){
+  if (stream && video.readyState >= 2 && !frozen){
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
+    gl.uniform1i(U('mode'), +$('mode').value); gl.uniform1f(U('gain'), +$('gain').value);
+    gl.uniform1i(U('clip'), showClip ? 1 : 0); gl.uniform1f(U('mir'), mirror ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  drawOverlay();
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ---------------------------------------------------------------- overlay
+function v2s(px, py){ const dpr = window.devicePixelRatio || 1; return [(mirror ? view.vw - px : px)*view.s*dpr, py*view.s*dpr]; }
+function drawOverlay(){
+  const dpr = window.devicePixelRatio || 1, W = ov.width, H = ov.height;
+  oc.clearRect(0, 0, W, H); oc.lineWidth = dpr;
+  if (showGrid){ oc.strokeStyle = 'rgba(255,255,255,.25)';
+    for (let i = 1; i < 10; i++){ oc.beginPath(); oc.moveTo(W*i/10, 0); oc.lineTo(W*i/10, H); oc.moveTo(0, H*i/10); oc.lineTo(W, H*i/10); oc.stroke(); } }
+  if (showCross){ oc.strokeStyle = 'rgba(0,255,160,.7)'; oc.beginPath();
+    oc.moveTo(W/2, 0); oc.lineTo(W/2, H); oc.moveTo(0, H/2); oc.lineTo(W, H/2); oc.stroke(); }
+  oc.font = (12*dpr) + 'px ui-monospace,monospace';
+  marks.forEach((m, i) => {
+    const [x, y] = v2s(m.x, m.y), r = 7.5*view.s*dpr;
+    oc.strokeStyle = i ? '#ffcf6b' : '#a883ff'; oc.strokeRect(x - r, y - r, 2*r, 2*r);
+    oc.fillStyle = oc.strokeStyle; oc.fillText(String(i+1), x + r + 3*dpr, y - r);
+  });
+  if (stream && video.videoWidth){
+    oc.save(); oc.setLineDash([4*dpr, 4*dpr]);
+    focusRegions(video.videoWidth, video.videoHeight).forEach((r, k) => {
+      const [a, b] = v2s(r.x + (mirror ? r.w : 0), r.y), [c2, e] = v2s(r.x + (mirror ? 0 : r.w), r.y + r.h);
+      oc.strokeStyle = FCOL[k] + '99'; oc.strokeRect(a, b, c2 - a, e - b);
+    });
+    oc.restore();
+  }
+  if (meas.length){ oc.strokeStyle = '#6ee7a8'; oc.fillStyle = '#6ee7a8'; oc.beginPath();
+    const [x0, y0] = v2s(meas[0].x, meas[0].y); oc.arc(x0, y0, 3*dpr, 0, 7); oc.fill();
+    if (meas.length > 1){ const [x1, y1] = v2s(meas[1].x, meas[1].y); oc.beginPath(); oc.moveTo(x0, y0); oc.lineTo(x1, y1); oc.stroke(); oc.beginPath(); oc.arc(x1, y1, 3*dpr, 0, 7); oc.fill(); } }
+  const sc = parseFloat($('scale').value);
+  if (sc > 0){                                   // 100 µm scale bar, bottom left
+    const L = 100/sc*view.s*dpr; oc.fillStyle = '#fff';
+    oc.fillRect(16*dpr, H - 22*dpr, L, 4*dpr); oc.fillText('100 µm', 16*dpr, H - 28*dpr);
+  }
+}
+ov.addEventListener('click', e => {
+  if (!stream) return;
+  const r = ov.getBoundingClientRect();
+  let px = (e.clientX - r.left)/view.s, py = (e.clientY - r.top)/view.s;
+  if (mirror) px = view.vw - px;
+  px = Math.round(px); py = Math.round(py);
+  if ($('clickMode').value === 'mark'){ marks.push({x: px, y: py}); }
+  else {
+    if (meas.length >= 2) meas = [];
+    meas.push({x: px, y: py});
+    if (meas.length === 2){
+      lastMeasPx = Math.hypot(meas[1].x - meas[0].x, meas[1].y - meas[0].y);
+      const sc = parseFloat($('scale').value);
+      $('measOut').innerHTML = 'Distance: <b>' + lastMeasPx.toFixed(1) + ' px</b>' + (sc > 0 ? ' = <b>' + (lastMeasPx*sc).toFixed(1) + ' µm</b>' : '');
+    }
+  }
+});
+$('clearM').onclick = () => { marks = []; meas = []; $('marks').textContent = ''; $('measOut').textContent = ''; };
+$('setScale').onclick = () => {
+  const k = parseFloat($('known').value);
+  if (lastMeasPx > 0 && k > 0){ $('scale').value = (k/lastMeasPx).toFixed(4); S.scale = $('scale').value; store.set(S);
+    $('measOut').innerHTML = 'Distance: <b>' + lastMeasPx.toFixed(1) + ' px</b> = <b>' + k.toFixed(1) + ' µm</b> &nbsp; scale set'; }
+};
+$('scale').onchange = () => { S.scale = $('scale').value; store.set(S); };
+if (S.scale) $('scale').value = S.scale;
+
+// ---------------------------------------------------------------- statistics (4 Hz, full resolution)
+const sc2 = document.createElement('canvas'), sx = sc2.getContext('2d', {willReadFrequently: true});
+function grabFrame(){
+  sc2.width = video.videoWidth; sc2.height = video.videoHeight;
+  sx.drawImage(video, 0, 0); return sx.getImageData(0, 0, sc2.width, sc2.height);
+}
+function chanOf(d, i, mode){ return mode == 1 ? d[i] : mode == 2 ? d[i+1] : mode == 4 || mode == 0 ? Math.max(d[i], d[i+1], d[i+2]) : d[i+2]; }
+setInterval(() => {
+  if (!stream || video.readyState < 2 || frozen) return;
+  const im = grabFrame(), d = im.data, mode = +$('mode').value, h = new Uint32Array(256);
+  let max = 0, sum = 0, n = 0, clip = 0;
+  for (let i = 0; i < d.length; i += 4){ const v = chanOf(d, i, mode); h[v]++; sum += v; n++; if (v > max) max = v; if (v >= 251) clip++; }
+  const hc = $('hist'), hx = hc.getContext('2d'); hx.fillStyle = '#000'; hx.fillRect(0, 0, 256, 70);
+  const hm = Math.max(...h.slice(1, 255)) || 1; hx.fillStyle = '#a883ff';
+  for (let v = 0; v < 256; v++){ const y = Math.min(70, 70*Math.log1p(h[v])/Math.log1p(hm)); hx.fillRect(v, 70 - y, 1, y); }
+  hx.fillStyle = clip ? '#ff3b3b' : '#444'; hx.fillRect(251, 0, 5, 70);
+  let cum = 0, p99 = 0; for (let v = 0; v < 256; v++){ cum += h[v]; if (cum >= 0.99*n){ p99 = v; break; } }
+  $('stats').innerHTML = 'Mean <b>' + (sum/n).toFixed(1) + '</b> &nbsp; 99 % <b>' + p99 + '</b> &nbsp; Max <b>' + max + '</b> &nbsp; Clipped <b class="' +
+    (clip ? 'bad' : 'ok') + '">' + (100*clip/n).toFixed(2) + ' %</b><br>' +
+    (p99 >= 251 ? '<span class="bad">Saturated: shorten exposure or lower gain before measuring.</span>'
+                : p99 < 60 ? '<span class="warn">Dim: lengthen exposure (whole frames) or raise gain.</span>'
+                : '<span class="ok">Exposure range OK for measuring.</span>');
+  if (marks.length){
+    const vals = marks.map(m => { let s = 0, c = 0;
+      for (let y = m.y - 7; y <= m.y + 7; y++) for (let x = m.x - 7; x <= m.x + 7; x++){
+        if (x < 0 || y < 0 || x >= im.width || y >= im.height) continue; s += chanOf(d, (y*im.width + x)*4, mode); c++; }
+      return c ? s/c : 0; });
+    $('marks').innerHTML = vals.map((v, i) => '<div><span>#' + (i+1) + ' (' + marks[i].x + ', ' + marks[i].y + ')</span><span>' +
+      v.toFixed(1) + (i ? ' &nbsp;' + (100*v/(vals[0] || 1)).toFixed(0) + ' % of #1' : '') + '</span></div>').join('');
+  }
+  const st = track && track.getSettings ? track.getSettings() : {};
+  $('hud').textContent = (video.videoWidth + '×' + video.videoHeight) + (fMeas ? ' @ ' + fMeas.toFixed(1) + ' fps measured' : (st.frameRate ? ' @ ' + Math.round(st.frameRate) + ' fps' : '')) +
+    (st.exposureTime ? '  exp ' + (st.exposureTime/10).toFixed(1) + ' ms' : '') + (st.exposureMode ? ' (' + st.exposureMode + ')' : '') +
+    (st.exposureTime && st.exposureTime/10 > 1000/(+$('fps').value || 30) + 0.5 ? '  ! exposure longer than one frame: lower the frame rate' : '');
+  focusMeter(im);
+}, 250);
+
+// ---------------------------------------------------------------- focus meter
+const FCOL = ['#a883ff', '#ffcf6b', '#6ee7a8', '#ff8a6b'];
+let fHist = [], fPeak = [], fKey = '';
+function focusRegions(W, H){
+  return marks.length ? marks.slice(0, 4).map(m => ({x: m.x - 64, y: m.y - 64, w: 128, h: 128}))
+                      : [{x: (W >> 1) - 128, y: (H >> 1) - 128, w: 256, h: 256}];
+}
+function focusMeter(im){
+  const d = im.data, W = im.width, H = im.height, regs = focusRegions(W, H);
+  const key = regs.map(r => r.x + ',' + r.y).join(';');
+  if (key !== fKey){ fKey = key; fHist = regs.map(() => []); fPeak = regs.map(() => ({v: 0, t: 0})); }
+  const now = performance.now();
+  regs.forEach((r, k) => {
+    const x0 = Math.max(1, r.x), x1 = Math.min(W - 2, r.x + r.w), y0 = Math.max(1, r.y), y1 = Math.min(H - 2, r.y + r.h);
+    let g = 0, sum = 0, n = 0;
+    const v = (x, y) => { const i = (y*W + x)*4; return Math.max(d[i], d[i+1], d[i+2]); };
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++){
+      const c = v(x, y), gx = v(x + 1, y) - c, gy = v(x, y + 1) - c;
+      g += gx*gx + gy*gy; sum += c; n++;
+    }
+    const m = sum/(n || 1), raw = n && m > 2 ? (g/n)/(m*m) : 0;
+    const h = fHist[k]; h.push(raw); if (h.length > 240) h.shift();
+    const sm = h.slice(-3).reduce((a, b) => a + b, 0)/Math.min(3, h.length);   // light smoothing
+    if (sm > fPeak[k].v){ fPeak[k] = {v: sm, t: now}; }
+    r.now = sm;
+  });
+  const c = $('fplot'), g2 = c.getContext('2d'); g2.fillStyle = '#000'; g2.fillRect(0, 0, 300, 90);
+  g2.strokeStyle = '#333'; g2.beginPath(); g2.moveTo(0, 90 - 0.8*85); g2.lineTo(300, 90 - 0.8*85); g2.stroke();
+  fHist.forEach((h, k) => {
+    const pk = fPeak[k].v || 1; g2.strokeStyle = FCOL[k]; g2.beginPath();
+    h.forEach((val, i) => { const x = 300 - (h.length - 1 - i)*1.25, y = 90 - 85*Math.min(1, val/pk); i ? g2.lineTo(x, y) : g2.moveTo(x, y); });
+    g2.stroke();
+  });
+  $('fout').innerHTML = regs.map((r, k) => '<span style="color:' + FCOL[k] + '">' + (marks.length ? '#' + (k + 1) : 'centre') +
+    '</span>: ' + (100*r.now/(fPeak[k].v || 1)).toFixed(0) + ' % of peak (peak ' + ((now - fPeak[k].t)/1000).toFixed(0) + ' s ago)').join('<br>') +
+    '<br><span class="dim">grey line = 80 % of peak</span>';
+}
+$('fReset').onclick = () => { fKey = ''; };
+
+// ---------------------------------------------------------------- camera + controls
+async function listDevices(){
+  const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const sel = $('dev'); sel.innerHTML = '';
+  ds.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('Camera ' + (i+1)); sel.appendChild(o); });
+  const pref = ds.find(d => d.deviceId === S.dev) || ds.find(d => /C9[23]0/i.test(d.label));
+  if (pref) sel.value = pref.deviceId;
+}
+async function start(){
+  stop(); $('msg').textContent = '';
+  const [w, h] = $('res').value.split('x').map(Number);
+  const fr = +$('fps').value || 30;
+  const c = {video: {width: {ideal: w}, height: {ideal: h}, frameRate: {ideal: fr, max: fr}}};
+  if ($('dev').value) c.video.deviceId = {exact: $('dev').value};
+  // ask for a native camera mode (no frame dropping in the browser), so the camera itself runs at the chosen fps
+  try{ stream = await navigator.mediaDevices.getUserMedia({video: Object.assign({}, c.video, {resizeMode: 'none'})}); }
+  catch(e1){
+    try{ stream = await navigator.mediaDevices.getUserMedia(c);
+         $('msg').textContent = 'No native mode at this fps: the browser may drop frames, and the camera may still run faster.'; }
+    catch(e){ $('msg').textContent = 'Camera error: ' + e.name + ' ' + e.message; return; }
+  }
+  track = stream.getVideoTracks()[0]; video.srcObject = stream; await video.play();
+  await listDevices(); $('dev').value = track.getSettings().deviceId || $('dev').value;
+  S.dev = $('dev').value; S.res = $('res').value; S.fps = $('fps').value; store.set(S);
+  layout();
+  await new Promise(r => setTimeout(r, 300));                  // some cameras report caps only after a frame
+  caps = track.getCapabilities ? track.getCapabilities() : {};
+  buildControls();
+  await restore();
+}
+function stop(){ if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; track = null; } }
+
+const RANGE_KEYS = [
+  ['exposureTime', 'Exposure time', 'exposureMode'], ['exposureCompensation', 'Exposure comp.', null],
+  ['brightness', 'Brightness', null], ['contrast', 'Contrast', null], ['saturation', 'Saturation', null],
+  ['sharpness', 'Sharpness', null], ['colorTemperature', 'White bal. (K)', 'whiteBalanceMode'],
+  ['focusDistance', 'Focus', 'focusMode'], ['zoom', 'Zoom', null], ['pan', 'Pan', null], ['tilt', 'Tilt', null],
+];
+const MODE_KEYS = [['exposureMode', 'Exposure mode'], ['whiteBalanceMode', 'White bal. mode'], ['focusMode', 'Focus mode']];
+async function apply(obj){
+  if (!track) return;
+  try{ await track.applyConstraints({advanced: [obj]}); }
+  catch(e){ $('capnote').innerHTML = '<span class="bad">' + Object.keys(obj).join(', ') + ': ' + e.message + '</span>'; }
+  Object.assign(S.ctrl, obj); store.set(S); readBack();
+}
+function buildControls(){
+  const box = $('ctrls'); box.innerHTML = '';
+  const have = Object.keys(caps).filter(k => RANGE_KEYS.some(r => r[0] === k) || MODE_KEYS.some(m => m[0] === k));
+  $('capnote').innerHTML = have.length
+    ? '<span class="ok">Camera controls available: ' + have.length + '</span>'
+    : '<span class="warn">This browser/camera exposes no manual controls. Use Chrome or Edge, or the fallback below.</span>';
+  for (const [k, name] of MODE_KEYS){
+    if (!Array.isArray(caps[k]) || !caps[k].length) continue;
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<label>' + name + '</label><select data-k="' + k + '" style="flex:1">' + caps[k].map(v => '<option>' + v + '</option>').join('') + '</select>';
+    row.querySelector('select').onchange = ev => apply({[k]: ev.target.value});
+    box.appendChild(row);
+  }
+  for (const [k, name, modeKey] of RANGE_KEYS){
+    const c = caps[k]; if (!c || typeof c.min !== 'number' || c.max <= c.min) continue;
+    const step = c.step || (c.max - c.min)/200;
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<label>' + name + '</label><input type="range" data-k="' + k + '" min="' + c.min + '" max="' + c.max + '" step="' + step + '"><input type="number" data-n="' + k + '" min="' + c.min + '" max="' + c.max + '" step="' + step + '">';
+    const r = row.querySelector('input[type=range]'), n = row.querySelector('input[type=number]');
+    const send = v => { v = Math.min(c.max, Math.max(c.min, +v)); r.value = n.value = v;
+      const o = {[k]: v}; if (modeKey && (caps[modeKey] || []).includes('manual')) o[modeKey] = 'manual'; apply(o); };
+    r.oninput = () => { n.value = r.value; }; r.onchange = () => send(r.value); n.onchange = () => send(n.value);
+    box.appendChild(row);
+  }
+  const fb = $('frameBtns'); fb.innerHTML = '';
+  const ec = caps.exposureTime;
+  if (ec){ [[167, '1 frame 16.7 ms'], [333, '2 frames 33.3 ms'], [500, '3 frames 50 ms'], [667, '4 frames 66.7 ms']].forEach(([v, t]) => {
+    if (v < ec.min || v > ec.max) return;
+    const b = document.createElement('button'); b.textContent = t;
+    b.onclick = () => apply({exposureMode: 'manual', exposureTime: v}); fb.appendChild(b); }); }
+  readBack();
+}
+function readBack(){
+  if (!track || !track.getSettings) return;
+  const st = track.getSettings();
+  document.querySelectorAll('#ctrls [data-k]').forEach(el => { const k = el.dataset.k; if (st[k] !== undefined) el.value = st[k]; });
+  document.querySelectorAll('#ctrls [data-n]').forEach(el => { const k = el.dataset.n; if (st[k] !== undefined) el.value = st[k]; });
+}
+async function restore(){
+  // re-apply saved manual settings: modes first, then values
+  const saved = S.ctrl || {}, modes = {}, vals = {};
+  for (const k in saved){ if (!(k in caps)) continue; (MODE_KEYS.some(m => m[0] === k) ? modes : vals)[k] = saved[k]; }
+  if (Object.keys(modes).length) await apply(modes);
+  for (const k in vals) await apply({[k]: vals[k]});
+}
+$('lockAll').onclick = async () => {
+  const o = {};
+  for (const [k] of MODE_KEYS) if ((caps[k] || []).includes('manual')) o[k] = 'manual';
+  await apply(o);
+  if (caps.sharpness) await apply({sharpness: caps.sharpness.min});
+  $('capnote').innerHTML += '<br><span class="ok">Exposure, white balance and focus set to manual; sharpness to minimum.</span>';
+};
+$('readBack').onclick = () => { readBack();
+  const st = track ? track.getSettings() : {}; $('capnote').innerHTML = '<pre>' + JSON.stringify(st, null, 1) + '</pre>'; };
+
+// ---------------------------------------------------------------- view toggles
+function tog(id, get, set){ const b = $(id); b.classList.toggle('on', get()); b.onclick = () => { set(!get()); b.classList.toggle('on', get()); store.set(S); }; }
+tog('clipB', () => showClip, v => { showClip = v; S.clip = v; });
+tog('crossB', () => showCross, v => { showCross = v; S.cross = v; });
+tog('gridB', () => showGrid, v => { showGrid = v; S.grid = v; });
+tog('freezeB', () => frozen, v => { frozen = v; });
+tog('mirrorB', () => mirror, v => { mirror = v; S.mirror = v; });
+$('gain').oninput = () => { $('gainV').textContent = $('gain').value + '×'; S.gain = $('gain').value; store.set(S); };
+$('mode').onchange = () => { S.mode = $('mode').value; store.set(S); };
+if (S.gain){ $('gain').value = S.gain; $('gainV').textContent = S.gain + '×'; }
+if (S.mode) $('mode').value = S.mode;
+if (S.res) $('res').value = S.res;
+
+// ---------------------------------------------------------------- saving
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const st = track ? track.getSettings() : {};
+  return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) +
+    (st.exposureTime ? '_exp' + Math.round(st.exposureTime) : '');
+}
+function saveCanvas(c, name){ c.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, 'image/png'); }
+$('snap').onclick = () => { if (!stream) return; grabFrame(); saveCanvas(sc2, 'cam_' + stamp() + '.png'); };
+$('avg').onclick = async () => {
+  if (!stream) return;
+  const N = +$('avgN').value, w = video.videoWidth, h = video.videoHeight, acc = new Float32Array(w*h*3);
+  let got = 0, lastT = -1; $('msg').textContent = 'Averaging ' + N + ' frames…';
+  while (got < N){
+    await new Promise(r => video.requestVideoFrameCallback ? video.requestVideoFrameCallback(() => r()) : requestAnimationFrame(r));
+    if (video.currentTime === lastT) continue; lastT = video.currentTime;
+    const d = grabFrame().data;
+    for (let i = 0, j = 0; i < d.length; i += 4, j += 3){ acc[j] += d[i]; acc[j+1] += d[i+1]; acc[j+2] += d[i+2]; }
+    got++;
+  }
+  const out = sx.createImageData(w, h);
+  for (let i = 0, j = 0; j < acc.length; i += 4, j += 3){ out.data[i] = acc[j]/N; out.data[i+1] = acc[j+1]/N; out.data[i+2] = acc[j+2]/N; out.data[i+3] = 255; }
+  sx.putImageData(out, 0, 0); saveCanvas(sc2, 'cam_' + stamp() + '_avg' + N + '.png'); $('msg').textContent = '';
+};
+let rec = null, chunks = [];
+$('rec').onclick = () => {
+  if (!stream) return;
+  if (rec){ rec.stop(); return; }
+  chunks = []; rec = new MediaRecorder(stream, {mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm'});
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const name = 'cam_' + stamp() + '.webm';
+  rec.onstop = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(chunks, {type: 'video/webm'})); a.download = name; a.click(); rec = null; $('rec').classList.remove('on'); $('rec').textContent = 'Record video'; };
+  rec.start(1000); $('rec').classList.add('on'); $('rec').textContent = 'Stop recording';
+};
+
+$('start').onclick = start; $('stop').onclick = stop;
+$('dev').onchange = start; $('res').onchange = () => { if (stream) start(); };
+$('fps').onchange = () => { if (stream) start(); };
+if (S.fps) $('fps').value = S.fps;
+// measured frame rate
+let fCount = 0, fT0 = performance.now(), fMeas = 0;
+function countFrame(){ fCount++; const t = performance.now(); if (t - fT0 >= 1000){ fMeas = fCount*1000/(t - fT0); fCount = 0; fT0 = t; }
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrame); }
+video.addEventListener('playing', () => { if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(countFrame); });
+listDevices().catch(() => {});
+</script></body></html>
